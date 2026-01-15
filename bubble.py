@@ -254,6 +254,41 @@ def combine_overlapping_bubbles(detections, touch_threshold=10):
     
     return merged
 
+def get_cropped_images(image_path, detections):
+    """
+    Get cropped PIL Images for each detection bounding box
+    
+    Args:
+        image_path: Path to input image
+        detections: List of detections with 'bbox' keys
+    
+    Returns:
+        List of (cropped_image, detection) tuples
+    """
+    # Load original image
+    image = Image.open(image_path).convert("RGB")
+    
+    cropped_images = []
+    
+    for i, det in enumerate(detections):
+        bbox = det['bbox']  # [x1, y1, x2, y2]
+        
+        # Convert to integers and ensure within image bounds
+        x1 = max(0, int(bbox[0]))
+        y1 = max(0, int(bbox[1]))
+        x2 = min(image.width, int(bbox[2]))
+        y2 = min(image.height, int(bbox[3]))
+        
+        # Skip if invalid bounding box
+        if x2 <= x1 or y2 <= y1:
+            continue
+        
+        # Crop the image
+        cropped = image.crop((x1, y1, x2, y2))
+        cropped_images.append((cropped, det))
+    
+    return cropped_images
+
 def crop_and_save_bubbles(image_path, detections, output_dir="output", prefix="bubble"):
     """
     Crop speech bubbles from image using bounding boxes and save them
@@ -265,43 +300,28 @@ def crop_and_save_bubbles(image_path, detections, output_dir="output", prefix="b
         prefix: Prefix for saved filenames (e.g., "bubble" -> "bubble_0.png", "bubble_1.png")
     
     Returns:
-        List of paths to saved cropped images
+        List of paths to saved cropped images, and list of (cropped_image, detection) tuples
     """
-    # Load original image
-    image = Image.open(image_path).convert("RGB")
+    # Get cropped images (reuses the image loading logic)
+    cropped_images = get_cropped_images(image_path, detections)
     
     # Create output directory
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     
     saved_paths = []
     
-    for i, det in enumerate(detections):
-        bbox = det['bbox']  # [x1, y1, x2, y2]
+    for i, (cropped_img, det) in enumerate(cropped_images, 1):
         conf = det['confidence']
         
-        # Convert to integers and ensure within image bounds
-        x1 = max(0, int(bbox[0]))
-        y1 = max(0, int(bbox[1]))
-        x2 = min(image.width, int(bbox[2]))
-        y2 = min(image.height, int(bbox[3]))
-        
-        # Skip if invalid bounding box
-        if x2 <= x1 or y2 <= y1:
-            print(f"  Skipping invalid bbox {i+1}: {bbox}")
-            continue
-        
-        # Crop the image
-        cropped = image.crop((x1, y1, x2, y2))
-        
         # Save with confidence in filename
-        filename = f"{prefix}_{i+1}_conf{conf:.3f}.png"
+        filename = f"{prefix}_{i}_conf{conf:.3f}.png"
         output_path = Path(output_dir) / filename
-        cropped.save(output_path)
+        cropped_img.save(output_path)
         saved_paths.append(str(output_path))
         
-        print(f"  Saved bubble {i+1}: {output_path} (confidence: {conf:.3f})")
+        print(f"  Saved bubble {i}: {output_path} (confidence: {conf:.3f})")
     
-    return saved_paths
+    return saved_paths, cropped_images
 
 # Helper functions are available for import
 # Use predict_image() or get_detections() as needed
