@@ -5,10 +5,6 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "accelerate>=1.12.0",
-    "einops>=0.8.1",
-    "paddleocr[all]>=3.3.2",
-    "paddlepaddle==3.2.0",
     "pillow>=12.1.0",
     "protobuf>=3.20.0",
     "sentencepiece>=0.2.1",
@@ -25,8 +21,17 @@ dependencies = [
 index-strategy = "unsafe-best-match"
 
 [tool.uv.sources]
-paddlepaddle = { index = "paddlepaddle-index" }
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
 
 [[tool.uv.index]]
-name = "paddlepaddle-index"
+name = "paddlepaddle-cpu"
 url = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
+
+[[tool.uv.index]]
+name = "paddlepaddle-cu129"
+url = "https://www.paddlepaddle.org.cn/packages/stable/cu129/"
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"

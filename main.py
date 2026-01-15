@@ -1,16 +1,23 @@
-from textocr import extract_text
-from bubble import predict_image, get_detections, crop_and_save_bubbles, combine_overlapping_bubbles
-from translate import translate_phrase
-from draw_text import draw_translated_text_on_image
-from bubble_clean import fill_bubble_interiors
+from src.manga_ocr import extract_text
+from src.bubble import find_speech_bubbles, get_detections, get_cropped_images
+from src.bbox import combine_overlapping_bubbles
+from src.translate import translate_phrase
+from src.draw_text import draw_translated_text_on_image
+from src.bubble_clean import fill_bubble_interiors
 from pathlib import Path
 import sys
 import cv2
-from PIL import Image   
+from PIL import Image
+
+# Image path constants
+INPUT_IMAGE_PATH = "input/image_15.png"
+OUTPUT_DIR = "output"
+SPEECH_BUBBLES_OUTPUT_PATH = "output/speech_bubbles.png"
+CLEANED_IMAGE_PATH = "output/cleaned.png"
+TRANSLATED_OUTPUT_PATH = "output/translated.png"
 
 def main():
     """Main function that orchestrates both PaddleOCR and bubble detection"""
-    image_path = "atelier.png"
     
     print("\n" + "=" * 50)
     print("Running speech bubble detection...")
@@ -18,23 +25,22 @@ def main():
     
     # Detect speech bubbles
     try:
-        _, annotated_img = predict_image(
-            image_path,
+        _, annotated_img = find_speech_bubbles(
+            INPUT_IMAGE_PATH,
             conf_threshold=0.25,
             iou_threshold=0.45,
             save_output=True,
-            output_dir="output"
+            output_dir=OUTPUT_DIR
         )
         
         if annotated_img:
             # Save to custom location
-            output_path = "output/speech_bubbles.png"
-            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-            annotated_img.save(output_path)
-            print(f"Annotated image saved to: {output_path}")
+            Path(SPEECH_BUBBLES_OUTPUT_PATH).parent.mkdir(parents=True, exist_ok=True)
+            annotated_img.save(SPEECH_BUBBLES_OUTPUT_PATH)
+            print(f"Annotated image saved to: {SPEECH_BUBBLES_OUTPUT_PATH}")
             
             # Get structured detections
-            detections = get_detections(image_path, conf_threshold=0.25)
+            detections = get_detections(INPUT_IMAGE_PATH, conf_threshold=0.25)
             print(f"\nTotal detections: {len(detections)} speech bubbles found")
             
             # Combine overlapping/touching/nested bubbles
@@ -43,15 +49,10 @@ def main():
                 merged_detections = combine_overlapping_bubbles(detections, touch_threshold=10)
                 print(f"After merging: {len(merged_detections)} speech bubbles")
                 
-                # Crop and save individual speech bubbles
-                print("\nCropping and saving speech bubbles...")
-                saved_paths, cropped_images = crop_and_save_bubbles(
-                    image_path,
-                    merged_detections,
-                    output_dir="output",
-                    prefix="bubble"
-                )
-                print(f"Saved {len(saved_paths)} cropped speech bubble images")
+                # Crop individual speech bubbles
+                print("\nCropping speech bubbles...")
+                cropped_images = get_cropped_images(INPUT_IMAGE_PATH, merged_detections)
+                print(f"Cropped {len(cropped_images)} speech bubble images")
                 
                 # Run OCR on each merged speech bubble and translate
                 print("\n" + "=" * 50)
@@ -93,7 +94,7 @@ def main():
                     
                     # Fill bubble interiors with base color
                     cleaned_image = fill_bubble_interiors(
-                        image_path, 
+                        INPUT_IMAGE_PATH, 
                         bubble_boxes, 
                         threshold_value=200, 
                         use_inpaint=False
@@ -104,22 +105,20 @@ def main():
                     cleaned_image_pil = Image.fromarray(cleaned_image_rgb)
                     
                     # Save cleaned image temporarily for draw_translated_text_on_image
-                    cleaned_image_path = "output/cleaned_for_translation.png"
-                    cleaned_image_pil.save(cleaned_image_path)
-                    print(f"Cleaned image saved to: {cleaned_image_path}")
+                    cleaned_image_pil.save(CLEANED_IMAGE_PATH)
+                    print(f"Cleaned image saved to: {CLEANED_IMAGE_PATH}")
                     
                     # Draw translated text on cleaned image
                     print("\n" + "=" * 50)
                     print("Drawing translated text on image...")
                     print("=" * 50)
                     
-                    translated_output_path = "output/image_with_translations.png"
                     translated_image = draw_translated_text_on_image(
-                        cleaned_image_path,
+                        CLEANED_IMAGE_PATH,
                         detections_translations,
-                        translated_output_path
+                        TRANSLATED_OUTPUT_PATH
                     )
-                    print(f"Image with translations saved to: {translated_output_path}")
+                    print(f"Image with translations saved to: {TRANSLATED_OUTPUT_PATH}")
 
     except Exception as e:
         print(f"Error in bubble detection: {e}")

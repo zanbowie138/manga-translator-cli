@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 from PIL import Image
 from typing import List, Tuple, Union
-from pathlib import Path
 
 
 def get_bubble_outline_and_interior_whitespace(
@@ -172,54 +171,3 @@ def fill_bubble_interiors(
     return output
 
 
-def test_bubble_clean(image_path: str = "lupin.png", output_dir: str = "output"):
-    """
-    Test function to run the complete bubble cleaning pipeline on an image.
-    
-    Args:
-        image_path: Path to input image
-        output_dir: Directory to save output images
-    """
-    from bubble import get_detections, combine_overlapping_bubbles
-    
-    print("=" * 50)
-    print("Testing Bubble Clean Pipeline (CCA Method)")
-    print("=" * 50)
-    
-    # Create output directory
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-    
-    # Step 1: Get speech bubble detections
-    print("\n[Step 1] Detecting speech bubbles...")
-    detections = get_detections(image_path, conf_threshold=0.25)
-    print(f"Found {len(detections)} speech bubbles")
-    
-    if not detections:
-        print("No speech bubbles detected. Exiting.")
-        return
-    
-    # Combine overlapping bubbles
-    merged_detections = combine_overlapping_bubbles(detections, touch_threshold=10)
-    print(f"After merging: {len(merged_detections)} speech bubbles")
-    
-    # Extract bubble bounding boxes
-    bubble_boxes = [det['bbox'] for det in merged_detections]
-    
-    # Step 2: Fill bubble interiors with base color using whitespace detection
-    print("\n[Step 2] Filling bubble interiors with base color using whitespace detection...")
-    cleaned_image = fill_bubble_interiors(image_path, bubble_boxes, threshold_value=200, use_inpaint=False)
-    
-    # Save cleaned image
-    cleaned_output_path = Path(output_dir) / "atelier_cleaned.png"
-    cv2.imwrite(str(cleaned_output_path), cleaned_image)
-    print(f"Cleaned image saved to: {cleaned_output_path}")
-    
-    print("\n" + "=" * 50)
-    print("Test complete!")
-    print("=" * 50)
-    print(f"\nResults:")
-    print(f"  - Cleaned image: {cleaned_output_path}")
-
-
-if __name__ == "__main__":
-    test_bubble_clean()

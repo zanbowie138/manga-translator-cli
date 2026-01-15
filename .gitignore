@@ -8,5 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+input/
 output/
 sugoi-v4-ja-en-ctranslate2/
