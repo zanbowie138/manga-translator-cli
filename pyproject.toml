@@ -1,0 +1,30 @@
+[project]
+name = "test"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "accelerate>=1.12.0",
+    "einops>=0.8.1",
+    "paddleocr[all]>=3.3.2",
+    "paddlepaddle==3.2.0",
+    "pillow>=12.1.0",
+    "protobuf>=3.20.0",
+    "sentencepiece>=0.2.1",
+    "torch>=2.9.1",
+    "torchvision>=0.24.1",
+    "transformers>=4.57.5",
+    "ultralytics>=8.0.0",
+    "huggingface-hub>=0.20.0",
+]
+
+[tool.uv]
+index-strategy = "unsafe-best-match"
+
+[tool.uv.sources]
+paddlepaddle = { index = "paddlepaddle-index" }
+
+[[tool.uv.index]]
+name = "paddlepaddle-index"
+url = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
