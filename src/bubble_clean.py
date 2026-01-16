@@ -166,8 +166,7 @@ def color_bubble_interiors_blue(
 def fill_bubble_interiors(
     image: Union[str, np.ndarray, Image.Image],
     boxes: List[Tuple[float, float, float, float]],
-    threshold_value: int = 200,
-    use_inpaint: bool = False
+    threshold_value: int = 200
 ) -> np.ndarray:
     """
     Use whitespace detection to find speech bubble outlines and fill everything inside with the base color.
@@ -176,7 +175,6 @@ def fill_bubble_interiors(
         image: Input image as file path, numpy array (BGR), or PIL Image
         boxes: List of bounding boxes as (x1, y1, x2, y2)
         threshold_value: Threshold value for binary thresholding (default: 200)
-        use_inpaint: If True, use inpainting for text removal. If False, fill entire interior with base color.
     
     Returns:
         Image with bubble interiors filled with base color as numpy array (BGR)
@@ -218,12 +216,8 @@ def fill_bubble_interiors(
         # Get base color of the bubble by sampling from inside the bubble mask
         base_color = get_bubble_base_color_from_mask(bubble_crop, bubble_mask, exclude_text_mask=text_mask)
         
-        if use_inpaint:
-            # Option 1: Inpaint only the text regions
-            bubble_crop = cv2.inpaint(bubble_crop, text_mask, 3, cv2.INPAINT_TELEA)
-        else:
-            # Option 2: Fill entire interior with base color
-            bubble_crop[bubble_mask > 0] = base_color
+        # Fill entire interior with base color
+        bubble_crop[bubble_mask > 0] = base_color
         
         # Paste the modified crop back into the output image
         output[y1:y2, x1:x2] = bubble_crop
