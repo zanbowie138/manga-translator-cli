@@ -29,7 +29,7 @@ def is_cjk(character):
                  (131072, 196607)]
                 ])
 
-def _load_models(model_path=None, device='cpu'):
+def load_translation_models(model_path=None, device='cpu'):
     """Load translation models lazily (only once)"""
     global _translator, _tokenizer_source, _tokenizer_target, _model_path, _device
     
@@ -85,7 +85,7 @@ def translate_phrase(text, model_path=None, device='cpu', beam_size=5):
     if not has_cjk:
         return "", False
     
-    translator, tokenizer_source, tokenizer_target = _load_models(model_path, device)
+    translator, tokenizer_source, tokenizer_target = load_translation_models(model_path, device)
     
     # Tokenize
     tokenized = tokenizer_source.encode(text, out_type=str)

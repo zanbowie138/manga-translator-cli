@@ -256,10 +256,11 @@ def _extract_and_translate_text(
     translation_model_path: Optional[str],
     translation_device: str,
     translation_beam_size: int,
-    verbose: bool
+    silent: bool = False
 ) -> Tuple[List[Tuple[BoundingBox, str]], List[BoundingBox]]:
     """
     Extract text from each bubble using OCR and translate it.
+    Processes extraction first for all bubbles, then batch translates all texts.
     
     Args:
         cropped_images: List of (cropped_image, bbox) tuples
@@ -268,60 +269,107 @@ def _extract_and_translate_text(
         translation_model_path: Path to translation model
         translation_device: Device for translation
         translation_beam_size: Beam size for translation
-        verbose: Whether to print progress
+        silent: If True, suppress progress messages
     
     Returns:
         Tuple of (bubble_texts, japanese_bboxes) where:
         - bubble_texts: List of (bbox, translated_text) tuples
         - japanese_bboxes: List of bounding boxes containing Japanese text
     """
-    if verbose:
+    if not silent:
         print("\n" + "=" * 50)
-        print("Running OCR on each speech bubble...")
+        print("Running OCR on all speech bubbles...")
         print("=" * 50)
     
+    # Step 1: Extract text from all bubbles
+    extracted_texts = []  # List of (bbox, extracted_text, index) tuples
+    for i, (cropped_img, bbox) in enumerate(cropped_images, 1):
+        if not silent:
+            print(f"\n--- Speech Bubble {i} ---")
+            print(f"Bounding box: {bbox}")
+        try:
+            extracted_text = extract_text(cropped_img, model_id=ocr_model_id, max_new_tokens=ocr_max_new_tokens)
+            if not silent:
+                sys.stdout.reconfigure(encoding='utf-8')
+                print(f"Original text: {extracted_text}")
+            extracted_texts.append((bbox, extracted_text, i))
+        except Exception as e:
+            if not silent:
+                print(f"Error extracting text from bubble {i}: {e}")
+            extracted_texts.append((bbox, "", i))
+    
+    # Step 2: Filter texts with CJK characters and prepare for batch translation
+    from src.translate import is_cjk
+    
+    texts_to_translate = []  # List of (bbox, extracted_text, index) tuples with CJK
+    for bbox, extracted_text, index in extracted_texts:
+        if extracted_text.strip():
+            has_cjk = any(is_cjk(c) for c in extracted_text)
+            if has_cjk:
+                texts_to_translate.append((bbox, extracted_text, index))
+    
+    if not texts_to_translate:
+        if not silent:
+            print("\nNo Japanese text found in any bubbles.")
+        return [], []
+    
+    # Step 3: Batch translate all texts
+    if not silent:
+        print("\n" + "=" * 50)
+        print(f"Translating {len(texts_to_translate)} text(s) with Japanese characters...")
+        print("=" * 50)
+    
+    # Import translation functions
+    from src.translate import load_translation_models, is_cjk
+    
+    # Load translation models
+    translator, tokenizer_source, tokenizer_target = load_translation_models(translation_model_path, translation_device)
+    
+    # Prepare all texts for batch translation
+    tokenized_texts = []
+    valid_indices = []
+    for bbox, extracted_text, index in texts_to_translate:
+        try:
+            tokenized = tokenizer_source.encode(extracted_text, out_type=str)
+            tokenized_texts.append(tokenized)
+            valid_indices.append((bbox, extracted_text, index))
+        except Exception as e:
+            if not silent:
+                print(f"Error tokenizing text from bubble {index}: {e}")
+    
+    if not tokenized_texts:
+        return [], []
+    
+    # Batch translate
+    try:
+        translated_results = translator.translate_batch(
+            source=tokenized_texts,
+            beam_size=translation_beam_size
+        )
+    except Exception as e:
+        if not silent:
+            print(f"Error in batch translation: {e}")
+        return [], []
+    
+    # Step 4: Decode translations and match back to bubbles
     bubble_texts = []  # List of (bbox, translated_text) tuples
     japanese_bboxes = []  # Track which bubbles contain Japanese
     
-    for i, (cropped_img, bbox) in enumerate(cropped_images, 1):
-        if verbose:
-            print(f"\n--- Speech Bubble {i} ---")
-            print(f"Bounding box: {bbox}")
-        translated_text = ""
-        translation_success = False
+    for (bbox, extracted_text, index), translated_result in zip(valid_indices, translated_results):
         try:
-            extracted_text = extract_text(cropped_img, model_id=ocr_model_id, max_new_tokens=ocr_max_new_tokens)
-            if verbose:
-                sys.stdout.reconfigure(encoding='utf-8')
-                print(f"Original text: {extracted_text}")
-            
-            # Translate the extracted text (includes CJK check)
-            if extracted_text.strip():
-                try:
-                    translated_text, translation_success = translate_phrase(
-                        extracted_text,
-                        model_path=translation_model_path,
-                        device=translation_device,
-                        beam_size=translation_beam_size
-                    )
-                    if translation_success:
-                        if verbose:
-                            print(f"Translated: {translated_text}")
-                    else:
-                        if verbose:
-                            print(f"  Skipping bubble {i}: No Japanese text detected")
-                except Exception as e:
-                    if verbose:
-                        print(f"Error translating bubble {i}: {e}")
-        except Exception as e:
-            if verbose:
-                print(f"Error extracting text from bubble {i}: {e}")
-        
-        # Only process bubbles with successful translation (has CJK)
-        if translation_success:
-            japanese_bboxes.append(bbox)
-            if translated_text:
+            # TODO: Add functionality to manage multiple hypotheses
+            # TODO: Add an option to replace the <unk> token with the most likely translation or a custom placeholder
+            translated_text = tokenizer_target.decode(translated_result.hypotheses[0]).replace('<unk>', '')
+            if translated_text.strip():
                 bubble_texts.append((bbox, translated_text))
+                japanese_bboxes.append(bbox)
+                if not silent:
+                    print(f"\nBubble {index}:")
+                    print(f"  Original: {extracted_text}")
+                    print(f"  Translated: {translated_text}")
+        except Exception as e:
+            if not silent:
+                print(f"Error decoding translation for bubble {index}: {e}")
     
     return bubble_texts, japanese_bboxes
 
@@ -642,7 +690,7 @@ def translate_manga_page(
         # Detect speech bubbles
         annotated_bubble_img, boxes, output_paths = _detect_speech_bubbles(
             input_image,
-            detection_model,
+            detection_model, 
             conf_threshold,
             iou_threshold,
             save_speech_bubbles,
@@ -724,7 +772,7 @@ def translate_manga_page(
         # Clean bubble interiors
         cleaned_image_pil, output_paths = _clean_bubble_interiors(
             input_image,
-            japanese_bboxes,
+            japanese_bboxes, 
             threshold_value,
             save_cleaned,
             output_base,
