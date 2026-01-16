@@ -1,5 +1,6 @@
 from pathlib import Path
 from PIL import Image
+from src.bbox import BoundingBox, normalize_boxes
 
 
 def save_pil_image(image: Image.Image, output_path: str, print_message: bool = True) -> None:
@@ -24,29 +25,30 @@ def get_cropped_images(image_path, boxes):
     
     Args:
         image_path: Path to input image
-        boxes: List of bounding boxes as [x1, y1, x2, y2]
+        boxes: List of bounding boxes (can be lists or BoundingBox instances)
     
     Returns:
-        List of (cropped_image, bbox) tuples
+        List of (cropped_image, bbox) tuples where bbox is a BoundingBox instance
     """
     # Load original image
     image = Image.open(image_path).convert("RGB")
     
+    # Normalize to BoundingBox instances
+    normalized_boxes = normalize_boxes(boxes)
+    
     cropped_images = []
     
-    for bbox in boxes:
-        # Convert to integers and ensure within image bounds
-        x1 = max(0, int(bbox[0]))
-        y1 = max(0, int(bbox[1]))
-        x2 = min(image.width, int(bbox[2]))
-        y2 = min(image.height, int(bbox[3]))
+    for bbox in normalized_boxes:
+        # Clip to image bounds
+        clipped_bbox = bbox.clip(image.width, image.height)
         
         # Skip if invalid bounding box
-        if x2 <= x1 or y2 <= y1:
+        if not clipped_bbox.is_valid():
             continue
         
         # Crop the image
+        x1, y1, x2, y2 = clipped_bbox
         cropped = image.crop((x1, y1, x2, y2))
-        cropped_images.append((cropped, bbox))
+        cropped_images.append((cropped, bbox))  # Keep original bbox, not clipped
     
     return cropped_images

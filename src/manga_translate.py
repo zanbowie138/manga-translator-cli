@@ -16,30 +16,12 @@ SUPPORTED_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG', 
 from src.ocr import extract_text
 from src.bubble import load_model, run_detection, process_detection_results
 from src.image_utils import get_cropped_images, save_pil_image
-from src.bbox import remove_parent_boxes, combine_overlapping_bubbles
+from src.bbox import BoundingBox, remove_parent_boxes, combine_overlapping_bubbles, normalize_boxes
 from src.translate import translate_phrase
 from src.draw_text import draw_text_on_image
 from src.bubble_clean import fill_bubble_interiors, visualize_bubble_masks, get_bubble_text_mask
 
 
-def _normalize_boxes(boxes: List[List[float]]) -> List[List[float]]:
-    """
-    Normalize bounding boxes to ensure correct ordering: x1 < x2 and y1 < y2.
-    
-    Args:
-        boxes: List of bounding boxes as [x1, y1, x2, y2]
-    
-    Returns:
-        List of normalized bounding boxes as [x1, y1, x2, y2] with x1 < x2 and y1 < y2
-    """
-    normalized = []
-    for box in boxes:
-        x1, y1, x2, y2 = box
-        # Ensure x1 < x2 and y1 < y2
-        x1, x2 = min(x1, x2), max(x1, x2)
-        y1, y2 = min(y1, y2), max(y1, y2)
-        normalized.append([x1, y1, x2, y2])
-    return normalized
 
 
 def _get_output_dir_path(output_base: Path, folder_name: str, output_subfolder: Optional[str] = None) -> Path:
@@ -146,13 +128,13 @@ def translate_manga_page(
     Returns:
         Dictionary containing:
         - 'annotated_image': PIL Image with detected bubbles (or None)
-        - 'boxes': List of detected bounding boxes
-        - 'filtered_boxes': List after removing parent boxes
+        - 'boxes': List of detected BoundingBox instances
+        - 'filtered_boxes': List of BoundingBox instances after removing parent boxes
         - 'blue_image': PIL Image with blue bubble interiors (or None)
         - 'cleaned_image': PIL Image with cleaned bubbles (or None)
         - 'translated_image': PIL Image with translated text (or None)
-        - 'bubble_texts': List of (bbox, translated_text) tuples
-        - 'bubble_masks': Dictionary mapping bbox to mask arrays
+        - 'bubble_texts': List of (BoundingBox, translated_text) tuples
+        - 'bubble_masks': Dictionary mapping BoundingBox to mask arrays
         - 'output_paths': Dictionary with saved file paths
     """
     # Initialize result dictionary
@@ -191,16 +173,12 @@ def translate_manga_page(
         # Load detection model
         if detection_model is None:
             if verbose:
-                print("\n" + "=" * 50)
                 print("Loading detection model...")
-                print("=" * 50)
             detection_model = load_model()
         
         # Detect speech bubbles
         if verbose:
-            print("\n" + "=" * 50)
             print("Running speech bubble detection...")
-            print("=" * 50)
         
         detection_results = run_detection(
             detection_model, 
@@ -211,14 +189,13 @@ def translate_manga_page(
         
         annotated_img, boxes = process_detection_results(detection_results)
         
-        # Normalize boxes to ensure correct ordering (x1 < x2, y1 < y2)
-        boxes = _normalize_boxes(boxes)
+        # Boxes are already BoundingBox instances from process_detection_results
         
         results['annotated_image'] = annotated_img
         results['boxes'] = boxes
         
         if verbose and annotated_img:
-            print(f"\nTotal detections: {len(boxes)} speech bubbles found")
+            print(f"Total detections: {len(boxes)} speech bubbles found")
         
         # Save annotated image if requested
         if save_speech_bubbles and annotated_img:
@@ -247,8 +224,7 @@ def translate_manga_page(
                 print("\nNo compound speech bubble processing applied...")
             filtered_bboxes = boxes
         
-        # Normalize filtered boxes to ensure correct ordering
-        filtered_bboxes = _normalize_boxes(filtered_bboxes)
+        # Filtered boxes are already BoundingBox instances
         
         results['filtered_boxes'] = filtered_bboxes
         if verbose:
@@ -257,9 +233,7 @@ def translate_manga_page(
         # Create image with all bubble interiors colored blue (if requested)
         if save_bubble_interiors:
             if verbose:
-                print("\n" + "=" * 50)
-                print("Coloring bubble interiors blue...")
-                print("=" * 50)
+                print("Visualizing bubble interiors...")
             blue_image = visualize_bubble_masks(
                 input_image_path,
                 filtered_bboxes,
@@ -364,23 +338,25 @@ def translate_manga_page(
         # Generate masks for all bubbles with translations
         bubble_masks = {}
         for bbox, _ in bubble_texts:
-            x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+            # Ensure bbox is a BoundingBox instance
+            if not isinstance(bbox, BoundingBox):
+                bbox = BoundingBox.from_list(bbox) if isinstance(bbox, list) else BoundingBox.from_tuple(bbox)
             
-            # Ensure bubble box is within image bounds
-            x1 = max(0, x1)
-            y1 = max(0, y1)
-            x2 = min(img_array.shape[1], x2)
-            y2 = min(img_array.shape[0], y2)
+            # Clip bounding box to image bounds
+            clipped_box = bbox.clip(img_array.shape[1], img_array.shape[0])
             
-            if x2 <= x1 or y2 <= y1:
+            # Validate that the box is valid
+            if not clipped_box.is_valid():
                 continue
+            
+            x1, y1, x2, y2 = clipped_box
             
             # Crop the bubble
             bubble_crop = img_array[y1:y2, x1:x2].copy()
             
             # Get bubble interior mask
             bubble_mask, _ = get_bubble_text_mask(bubble_crop, threshold_value=threshold_value)
-            bubble_masks[tuple(bbox)] = bubble_mask
+            bubble_masks[bbox] = bubble_mask  # Use BoundingBox as key (it's hashable)
         
         results['bubble_masks'] = bubble_masks
         

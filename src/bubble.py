@@ -2,6 +2,7 @@ from ultralytics import YOLO
 from huggingface_hub import hf_hub_download
 from PIL import Image
 import os
+from src.bbox import BoundingBox
 
 # Directory where downloaded model will be stored
 MODEL_DIR = "cached_models"
@@ -70,7 +71,7 @@ def process_detection_results(results):
     
     Returns:
         annotated_image: PIL Image with annotations (or None if no detections)
-        boxes: List of bounding boxes as [x1, y1, x2, y2] (or empty list if no detections)
+        boxes: List of BoundingBox instances (or empty list if no detections)
     """
     # Get annotated image and boxes from results
     for r in results:
@@ -81,8 +82,8 @@ def process_detection_results(results):
         # Extract bounding boxes
         boxes = []
         for box in r.boxes:
-            bbox = box.xyxy[0].cpu().numpy().tolist()
-            boxes.append(bbox)
+            bbox_list = box.xyxy[0].cpu().numpy().tolist()
+            boxes.append(BoundingBox.from_list(bbox_list))
         
         # Print detection info
         print(f"Found {len(boxes)} speech bubbles")
@@ -100,7 +101,7 @@ def get_detections(image_path, conf_threshold=0.25, iou_threshold=0.45):
     Get detection results as a list of bounding boxes
     
     Returns:
-        List of bounding boxes as [x1, y1, x2, y2]
+        List of BoundingBox instances
     """
     model = load_model()
     
@@ -115,8 +116,8 @@ def get_detections(image_path, conf_threshold=0.25, iou_threshold=0.45):
     for r in results:
         for box in r.boxes:
             # Get bounding box coordinates (xyxy format)
-            bbox = box.xyxy[0].cpu().numpy().tolist()
-            boxes.append(bbox)
+            bbox_list = box.xyxy[0].cpu().numpy().tolist()
+            boxes.append(BoundingBox.from_list(bbox_list))
     
     return boxes
 

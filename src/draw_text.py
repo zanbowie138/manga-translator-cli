@@ -162,8 +162,8 @@ def draw_text_on_image(image_path, box_texts, bubble_masks, font_path=None):
     
     Args:
         image_path: Path to original image
-        box_texts: List of (bbox, translated_text) tuples where bbox is [x1, y1, x2, y2]
-        bubble_masks: Dictionary mapping bbox tuple to bubble_mask numpy array
+        box_texts: List of (bbox, translated_text) tuples where bbox is a BoundingBox instance
+        bubble_masks: Dictionary mapping BoundingBox to bubble_mask numpy array
         font_path: Path to font file (None to try system font)
     
     Returns:
@@ -177,15 +177,16 @@ def draw_text_on_image(image_path, box_texts, bubble_masks, font_path=None):
         if not translated_text or not translated_text.strip():
             continue
         
-        # bbox is [x1, y1, x2, y2]
-        x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+        # Ensure bbox is a BoundingBox instance
+        if not isinstance(bbox, BoundingBox):
+            bbox = BoundingBox.from_list(bbox) if isinstance(bbox, list) else BoundingBox.from_tuple(bbox)
         
         # Get the mask for this bubble
-        bbox_key = tuple(bbox)
-        if bbox_key not in bubble_masks:
+        if bbox not in bubble_masks:
             continue
         
-        bubble_mask = bubble_masks[bbox_key]
+        bubble_mask = bubble_masks[bbox]
+        x1, y1, x2, y2 = int(bbox.x1), int(bbox.y1), int(bbox.x2), int(bbox.y2)
         
         # Find bounding rectangle of the mask (actual interior shape)
         mask_points = cv2.findNonZero(bubble_mask)

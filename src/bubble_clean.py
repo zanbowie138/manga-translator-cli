@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from PIL import Image
 from typing import List, Tuple, Union
+from src.bbox import BoundingBox, normalize_boxes
 
 
 def get_bubble_text_mask(
@@ -105,7 +106,7 @@ def get_bubble_base_color_from_mask(
 
 def visualize_bubble_masks(
     image: Union[str, np.ndarray, Image.Image],
-    boxes: List[Tuple[float, float, float, float]],
+    boxes: List[Union[List[float], Tuple[float, ...], BoundingBox]],
     threshold_value: int = 200
 ) -> np.ndarray:
     """
@@ -114,7 +115,7 @@ def visualize_bubble_masks(
     
     Args:
         image: Input image as file path, numpy array (BGR), or PIL Image
-        boxes: List of bounding boxes as (x1, y1, x2, y2)
+        boxes: List of bounding boxes (can be lists, tuples, or BoundingBox instances)
         threshold_value: Threshold value for binary thresholding (default: 200)
     
     Returns:
@@ -139,6 +140,9 @@ def visualize_bubble_masks(
     else:
         output = img_array.copy()
     
+    # Normalize to BoundingBox instances
+    normalized_boxes = normalize_boxes(boxes)
+    
     # Define colors with transparency (BGR + Alpha)
     # Blue for bubble interiors: (255, 0, 0, 128) in BGRA
     # Green for exteriors within bounding box: (0, 255, 0, 128) in BGRA
@@ -146,17 +150,14 @@ def visualize_bubble_masks(
     green_color = np.array([0, 255, 0, 128], dtype=np.uint8)  # Transparent green (BGR + Alpha)
     
     # Process each bounding box individually
-    for bubble_box in boxes:
-        x1, y1, x2, y2 = [int(coord) for coord in bubble_box]
+    for bubble_box in normalized_boxes:
+        # Clip to image bounds
+        clipped_box = bubble_box.clip(img_array.shape[1], img_array.shape[0])
         
-        # Ensure bubble box is within image bounds
-        x1 = max(0, x1)
-        y1 = max(0, y1)
-        x2 = min(img_array.shape[1], x2)
-        y2 = min(img_array.shape[0], y2)
-        
-        if x2 <= x1 or y2 <= y1:
+        if not clipped_box.is_valid():
             continue
+        
+        x1, y1, x2, y2 = clipped_box
         
         # Crop the bubble region from the output image
         bubble_region = output[y1:y2, x1:x2].copy()
@@ -183,7 +184,7 @@ def visualize_bubble_masks(
 
 def fill_bubble_interiors(
     image: Union[str, np.ndarray, Image.Image],
-    boxes: List[Tuple[float, float, float, float]],
+    boxes: List[Union[List[float], Tuple[float, ...], BoundingBox]],
     threshold_value: int = 200
 ) -> np.ndarray:
     """
@@ -191,7 +192,7 @@ def fill_bubble_interiors(
     
     Args:
         image: Input image as file path, numpy array (BGR), or PIL Image
-        boxes: List of bounding boxes as (x1, y1, x2, y2)
+        boxes: List of bounding boxes (can be lists, tuples, or BoundingBox instances)
         threshold_value: Threshold value for binary thresholding (default: 200)
     
     Returns:
@@ -212,18 +213,18 @@ def fill_bubble_interiors(
     
     output = img_array.copy()
     
+    # Normalize to BoundingBox instances
+    normalized_boxes = normalize_boxes(boxes)
+    
     # Process each bubble
-    for bubble_box in boxes:
-        x1, y1, x2, y2 = [int(coord) for coord in bubble_box]
+    for bubble_box in normalized_boxes:
+        # Clip to image bounds
+        clipped_box = bubble_box.clip(img_array.shape[1], img_array.shape[0])
         
-        # Ensure bubble box is within image bounds
-        x1 = max(0, x1)
-        y1 = max(0, y1)
-        x2 = min(img_array.shape[1], x2)
-        y2 = min(img_array.shape[0], y2)
-        
-        if x2 <= x1 or y2 <= y1:
+        if not clipped_box.is_valid():
             continue
+        
+        x1, y1, x2, y2 = clipped_box
         
         # Crop the bubble
         bubble_crop = output[y1:y2, x1:x2].copy()
