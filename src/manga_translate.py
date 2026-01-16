@@ -16,7 +16,7 @@ SUPPORTED_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG', 
 from src.ocr import extract_text
 from src.bubble import load_model, run_detection, process_detection_results
 from src.image_utils import get_cropped_images, save_pil_image
-from src.bbox import remove_parent_boxes
+from src.bbox import remove_parent_boxes, combine_overlapping_bubbles
 from src.translate import translate_phrase
 from src.draw_text import draw_text_on_image
 from src.bubble_clean import fill_bubble_interiors, color_bubble_interiors_blue, get_bubble_text_mask
@@ -30,6 +30,7 @@ def translate_manga_page(
     conf_threshold: float = 0.25,
     iou_threshold: float = 0.45,
     parent_box_threshold: int = 10,
+    bbox_processing: str = 'remove-parent',
     # Bubble processing parameters
     threshold_value: int = 200,
     # Text parameters
@@ -67,7 +68,8 @@ def translate_manga_page(
         detection_model: Pre-loaded YOLO model (None to load automatically)
         conf_threshold: Confidence threshold for bubble detection (0-1)
         iou_threshold: IoU threshold for NMS (0-1)
-        parent_box_threshold: Threshold for removing parent boxes
+        parent_box_threshold: Threshold for processing compound speech bubbles
+        bbox_processing: Compound speech bubble processing mode ('remove-parent', 'combine-children', or 'none')
         threshold_value: Threshold for bubble mask detection
         font_path: Path to font file (None to use system default)
         translation_model_path: Path to translation model (None for default)
@@ -161,18 +163,28 @@ def translate_manga_page(
             save_pil_image(annotated_img, str(speech_bubbles_path), print_message=verbose)
             results['output_paths']['speech_bubbles'] = str(speech_bubbles_path)
         
-        # Remove parent boxes, keeping only children
+        # Process bounding boxes based on mode
         if not boxes:
             if verbose:
                 print("No speech bubbles detected.")
             return results
         
-        if verbose:
-            print("\nRemoving parent boxes, keeping only children...")
-        filtered_bboxes = remove_parent_boxes(boxes, threshold=parent_box_threshold)
+        if bbox_processing == 'remove-parent':
+            if verbose:
+                print("\nProcessing compound speech bubbles: removing parent boxes, keeping only children...")
+            filtered_bboxes = remove_parent_boxes(boxes, threshold=parent_box_threshold)
+        elif bbox_processing == 'combine-children':
+            if verbose:
+                print("\nProcessing compound speech bubbles: combining overlapping/touching bubbles...")
+            filtered_bboxes = combine_overlapping_bubbles(boxes, touch_threshold=parent_box_threshold)
+        else:  # 'none'
+            if verbose:
+                print("\nNo compound speech bubble processing applied...")
+            filtered_bboxes = boxes
+        
         results['filtered_boxes'] = filtered_bboxes
         if verbose:
-            print(f"After filtering: {len(filtered_bboxes)} speech bubbles")
+            print(f"After processing: {len(filtered_bboxes)} speech bubbles")
         
         # Create image with all bubble interiors colored blue (if requested)
         if save_bubble_interiors:
@@ -365,6 +377,7 @@ def translate_manga_folder(
     conf_threshold: float = 0.25,
     iou_threshold: float = 0.45,
     parent_box_threshold: int = 10,
+    bbox_processing: str = 'remove-parent',
     # Bubble processing parameters
     threshold_value: int = 200,
     # Text parameters
@@ -396,7 +409,8 @@ def translate_manga_folder(
         output_folder: Base folder path for all outputs (same structure as translate_manga_page)
         conf_threshold: Confidence threshold for bubble detection (0-1)
         iou_threshold: IoU threshold for NMS (0-1)
-        parent_box_threshold: Threshold for removing parent boxes
+        parent_box_threshold: Threshold for processing compound speech bubbles
+        bbox_processing: Compound speech bubble processing mode ('remove-parent', 'combine-children', or 'none')
         threshold_value: Threshold for bubble mask detection
         font_path: Path to font file (None to use system default)
         translation_model_path: Path to translation model (None for default)
@@ -487,6 +501,7 @@ def translate_manga_folder(
                 conf_threshold=conf_threshold,
                 iou_threshold=iou_threshold,
                 parent_box_threshold=parent_box_threshold,
+                bbox_processing=bbox_processing,
                 threshold_value=threshold_value,
                 font_path=font_path,
                 translation_model_path=translation_model_path,

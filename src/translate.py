@@ -2,7 +2,6 @@ import ctranslate2
 import sentencepiece
 from huggingface_hub import snapshot_download
 import os
-import re
 
 # Cache for loaded models
 _translator = None
@@ -11,9 +10,24 @@ _tokenizer_target = None
 _model_path = None
 _device = None
 
-# Japanese character range pattern (excluding middle dot ・ U+30FB)
-# https://stackoverflow.com/questions/30069846/how-to-find-out-chinese-or-japanese-character-in-a-string-in-python
-CJK_CHAR_PATTERN = re.compile(r"[\u3300-\u33ff\ufe30-\ufe4f\uf900-\ufaff\U0002f800-\U0002fa1f\u30a0-\u30fa\u30fc-\u30ff\u2e80-\u2eff\u4e00-\u9fff\u3400-\u4dbf\U00020000-\U0002a6df\U0002a700-\U0002b73f\U0002b740-\U0002b81f\U0002b820-\U0002ceaf]+")
+def is_cjk(character):
+    """"
+    Checks whether character is CJK.
+
+        >>> is_cjk(u'\u33fe')
+        True
+        >>> is_cjk(u'\uFE5F')
+        False
+
+    :param character: The character that needs to be checked.
+    :type character: char
+    :return: bool
+    """
+    return any([start <= ord(character) <= end for start, end in 
+                [(4352, 4607), (11904, 42191), (43072, 43135), (44032, 55215), 
+                 (63744, 64255), (65072, 65103), (65381, 65500), 
+                 (131072, 196607)]
+                ])
 
 def _load_models(model_path=None, device='cpu'):
     """Load translation models lazily (only once)"""
@@ -67,7 +81,7 @@ def translate_phrase(text, model_path=None, device='cpu', beam_size=5):
     if not text or not text.strip():
         return "", False
     
-    has_cjk = bool(CJK_CHAR_PATTERN.search(text))
+    has_cjk = any(is_cjk(c) for c in text)
     if not has_cjk:
         return "", False
     

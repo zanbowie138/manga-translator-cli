@@ -102,8 +102,9 @@ def box_contains(box1, box2, threshold=0.0):
 
 def remove_parent_boxes(boxes, threshold=0.0):
     """
-    Remove parent bounding boxes and keep children.
-    If a box contains another box, remove the parent (outer) and keep the child (inner).
+    Remove parent bounding boxes from compound speech bubbles and keep children.
+    For compound speech bubbles (bubbles within bubbles), removes the parent (outer) 
+    box and keeps the child (inner) box.
     
     Args:
         boxes: List of bounding boxes as [x1, y1, x2, y2]
@@ -133,77 +134,59 @@ def remove_parent_boxes(boxes, threshold=0.0):
         if not is_parent:
             filtered.append(current_bbox)
         else:
-            print(f"  Removed parent box containing child box")
+            print(f"  Removed parent box from compound speech bubble, keeping child box")
     
     return filtered
 
 
-def combine_overlapping_bubbles(detections, touch_threshold=10):
+def combine_overlapping_bubbles(boxes, touch_threshold=10):
     """
-    Combine speech bubble bounding boxes that are inside one another or touching
+    Combine compound speech bubble bounding boxes that are inside one another or touching.
+    Merges overlapping or adjacent bubbles from compound speech bubbles into single boxes.
     
     Args:
-        detections: List of detections with 'bbox', 'confidence', etc.
+        boxes: List of bounding boxes as [x1, y1, x2, y2]
         touch_threshold: Pixel threshold for considering boxes as touching
     
     Returns:
-        List of merged detections
+        List of merged bounding boxes as [x1, y1, x2, y2]
     """
-    if not detections:
-        return detections
+    if not boxes:
+        return boxes
     
     # Create a copy to work with
-    remaining = detections.copy()
+    remaining = boxes.copy()
     merged = []
     
     while remaining:
         # Start with the first box
-        current = remaining.pop(0)
-        current_bbox = current['bbox']
-        current_confidences = [current['confidence']]
+        current_bbox = remaining.pop(0)
         
         # Find all boxes that are inside or touching the current box
         to_merge = []
         i = 0
         while i < len(remaining):
-            other = remaining[i]
-            other_bbox = other['bbox']
+            other_bbox = remaining[i]
             
             # Check if boxes are inside each other or touching
             if is_box_inside(current_bbox, other_bbox, threshold=touch_threshold) or \
                are_boxes_touching(current_bbox, other_bbox, threshold=touch_threshold):
-                to_merge.append(other)
+                to_merge.append(other_bbox)
                 remaining.pop(i)
-                current_confidences.append(other['confidence'])
             else:
                 i += 1
         
         # Merge all boxes
         if to_merge:
             # Merge bounding boxes
-            for other in to_merge:
-                current_bbox = merge_boxes(current_bbox, other['bbox'])
+            for other_bbox in to_merge:
+                current_bbox = merge_boxes(current_bbox, other_bbox)
             
-            # Use the maximum confidence
-            max_confidence = max(current_confidences)
-            
-            # Create merged detection
-            merged_detection = {
-                'bbox': current_bbox,
-                'confidence': max_confidence,
-                'class': current['class'],
-                'merged_count': len(to_merge) + 1  # Track how many boxes were merged
-            }
-            
-            # Preserve mask if available (use the first one)
-            if 'mask' in current:
-                merged_detection['mask'] = current['mask']
-            
-            merged.append(merged_detection)
-            print(f"  Merged {len(to_merge) + 1} overlapping/touching bubbles into one")
+            merged.append(current_bbox)
+            print(f"  Merged {len(to_merge) + 1} overlapping/touching compound speech bubbles into one")
         else:
             # No merging needed, keep as is
-            merged.append(current)
+            merged.append(current_bbox)
     
     return merged
 

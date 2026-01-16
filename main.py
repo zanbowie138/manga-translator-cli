@@ -66,8 +66,15 @@ Examples:
     parser.add_argument(
         '--parent-box-threshold',
         type=int,
-        default=10,
-        help='Threshold for removing parent boxes (default: 10)'
+        default=100,
+        help='Threshold for processing compound speech bubbles (default: 100)'
+    )
+    parser.add_argument(
+        '--bbox-processing',
+        type=str,
+        default='remove-parent',
+        choices=['remove-parent', 'combine-children', 'none'],
+        help='Compound speech bubble processing mode: remove-parent (remove parent boxes, keep children), combine-children (combine overlapping/touching compound bubbles), or none (no processing) (default: remove-parent)'
     )
     
     # Bubble processing
@@ -225,6 +232,7 @@ def main():
         'conf_threshold': args.conf_threshold,
         'iou_threshold': args.iou_threshold,
         'parent_box_threshold': args.parent_box_threshold,
+        'bbox_processing': args.bbox_processing,
         'threshold_value': args.threshold_value,
         'font_path': args.font,
         'translation_model_path': args.translation_model,
