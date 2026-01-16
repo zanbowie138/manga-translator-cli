@@ -97,3 +97,160 @@ def translate_phrase(text, model_path=None, device='cpu', beam_size=5):
     translated_text = tokenizer_target.decode(translated[0].hypotheses[0]).replace('<unk>', '')
     
     return translated_text, True
+
+
+def translate_batch(
+    texts: list,
+    model_path=None,
+    device='cpu',
+    beam_size=5,
+    silent=False
+):
+    """
+    Batch translate a list of Japanese texts to English.
+    
+    Filters texts for CJK characters, tokenizes, translates in batch, and decodes results.
+    
+    Args:
+        texts: List of text strings to translate
+        model_path: Path to model directory (defaults to 'sugoi-v4-ja-en-ctranslate2')
+        device: Device to use ('cpu' or 'cuda')
+        beam_size: Beam size for translation (default 5)
+        silent: If True, suppress progress messages
+    
+    Returns:
+        List of translated text strings (empty string for texts without CJK or failed translations)
+    """
+    if not texts:
+        return []
+    
+    # Filter texts with CJK characters
+    texts_to_translate = []
+    text_indices = []  # Track original indices
+    
+    for idx, text in enumerate(texts):
+        if text and text.strip() and any(is_cjk(c) for c in text):
+            texts_to_translate.append(text)
+            text_indices.append(idx)
+    
+    if not texts_to_translate:
+        if not silent:
+            print("\nNo Japanese text found to translate.")
+        return [""] * len(texts)
+    
+    if not silent:
+        print(f"\nTranslating {len(texts_to_translate)} text(s) with Japanese characters...")
+    
+    # Load translation models
+    translator, tokenizer_source, tokenizer_target = load_translation_models(model_path, device)
+    
+    # Tokenize all texts
+    tokenized_texts = []
+    valid_indices = []
+    for idx, text in zip(text_indices, texts_to_translate):
+        try:
+            tokenized = tokenizer_source.encode(text, out_type=str)
+            tokenized_texts.append(tokenized)
+            valid_indices.append(idx)
+        except Exception as e:
+            if not silent:
+                print(f"Error tokenizing text at index {idx}: {e}")
+    
+    if not tokenized_texts:
+        return [""] * len(texts)
+    
+    # Batch translate
+    try:
+        translated_results = translator.translate_batch(
+            source=tokenized_texts,
+            beam_size=beam_size
+        )
+    except Exception as e:
+        if not silent:
+            print(f"Error in batch translation: {e}")
+        return [""] * len(texts)
+    
+    # Initialize result list with empty strings
+    translated_texts = [""] * len(texts)
+    
+    # Decode translations and map back to original indices
+    for idx, translated_result in zip(valid_indices, translated_results):
+        try:
+            translated_text = tokenizer_target.decode(translated_result.hypotheses[0]).replace('<unk>', '')
+            translated_texts[idx] = translated_text
+        except Exception as e:
+            if not silent:
+                print(f"Error decoding translation at index {idx}: {e}")
+    
+    return translated_texts
+
+
+def translate_individual(
+    texts: list,
+    model_path=None,
+    device='cpu',
+    beam_size=5,
+    silent=False
+):
+    """
+    Translate a list of Japanese texts to English individually (not batched).
+    
+    Processes each text separately, one at a time. Filters texts for CJK characters before processing.
+    
+    Args:
+        texts: List of text strings to translate
+        model_path: Path to model directory (defaults to 'sugoi-v4-ja-en-ctranslate2')
+        device: Device to use ('cpu' or 'cuda')
+        beam_size: Beam size for translation (default 5)
+        silent: If True, suppress progress messages
+    
+    Returns:
+        List of translated text strings (empty string for texts without CJK or failed translations)
+    """
+    if not texts:
+        return []
+    
+    # Filter texts with CJK characters
+    texts_to_translate = []
+    text_indices = []  # Track original indices
+    
+    for idx, text in enumerate(texts):
+        if text and text.strip() and any(is_cjk(c) for c in text):
+            texts_to_translate.append(text)
+            text_indices.append(idx)
+    
+    if not texts_to_translate:
+        if not silent:
+            print("\nNo Japanese text found to translate.")
+        return [""] * len(texts)
+    
+    if not silent:
+        print(f"\nTranslating {len(texts_to_translate)} text(s) with Japanese characters...")
+    
+    # Load translation models once
+    translator, tokenizer_source, tokenizer_target = load_translation_models(model_path, device)
+    
+    # Initialize result list with empty strings
+    translated_texts = [""] * len(texts)
+    
+    # Process each text individually
+    for idx, text in zip(text_indices, texts_to_translate):
+        try:
+            # Tokenize
+            tokenized = tokenizer_source.encode(text, out_type=str)
+            
+            # Translate (single text, but still use translate_batch API)
+            translated_results = translator.translate_batch(
+                source=[tokenized],
+                beam_size=beam_size
+            )
+            
+            # Decode
+            translated_text = tokenizer_target.decode(translated_results[0].hypotheses[0]).replace('<unk>', '')
+            translated_texts[idx] = translated_text
+            
+        except Exception as e:
+            if not silent:
+                print(f"Error translating text at index {idx}: {e}")
+    
+    return translated_texts

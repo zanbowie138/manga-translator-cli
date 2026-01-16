@@ -8,7 +8,7 @@ Supports translating single images or entire folders of manga pages.
 import argparse
 import sys
 from pathlib import Path
-from src.manga_translate import translate_manga_page, translate_manga_folder
+from src.manga_translate import translate_manga_page, translate_manga_folder, translate_manga_page_batch, translate_manga_folder_batch
 
 
 def parse_args():
@@ -172,6 +172,19 @@ Examples:
         help='Stop processing on first error (applies to folders)'
     )
     
+    # Batch processing
+    parser.add_argument(
+        '--batch',
+        action='store_true',
+        help='Enable batch processing mode (process all pages through each pipeline step together)'
+    )
+    parser.add_argument(
+        '--batch-amount',
+        type=int,
+        default=None,
+        help='Maximum number of pages to process in each batch (default: None = process all at once)'
+    )
+    
     return parser.parse_args()
 
 
@@ -260,22 +273,35 @@ def main():
         total_failed = 0
         all_results = []
         
+        # Collect individual files for batch processing
+        individual_files = []
+        
         for input_str in args.input:
             input_path = Path(input_str)
             
             if input_path.is_dir():
-                # Process folder
+                # Process folder immediately
                 if not silent:
                     print(f"\n{'='*50}")
                     print(f"Processing folder: {input_str}")
                     print(f"{'='*50}")
                 
-                results = translate_manga_folder(
-                    input_folder=input_str,
-                    output_folder=args.output,
-                    continue_on_error=not args.stop_on_error,
-                    **common_params
-                )
+                if args.batch:
+                    # Batch processing mode
+                    results = translate_manga_folder_batch(
+                        input_folder=input_str,
+                        output_folder=args.output,
+                        batch_amount=args.batch_amount,
+                        **common_params
+                    )
+                else:
+                    # Individual processing mode
+                    results = translate_manga_folder(
+                        input_folder=input_str,
+                        output_folder=args.output,
+                        continue_on_error=not args.stop_on_error,
+                        **common_params
+                    )
                 
                 total_processed += results['successful_count']
                 total_failed += results['failed_count']
@@ -288,18 +314,53 @@ def main():
                     print(f"  Failed: {results['failed_count']}")
             
             elif input_path.is_file() and input_path.suffix in supported_extensions:
-                # Process single file
-                if not silent:
-                    print(f"\n{'='*50}")
-                    print(f"Processing file: {input_str}")
-                    print(f"{'='*50}")
-                
-                results = translate_manga_page(
-                    input_image_path=input_str,
-                    output_folder=args.output,
-                    **common_params
-                )
-                
+                # Collect individual files for batch processing
+                if args.batch:
+                    individual_files.append(input_str)
+                else:
+                    # Process single file immediately (non-batch mode)
+                    if not silent:
+                        print(f"\n{'='*50}")
+                        print(f"Processing file: {input_str}")
+                        print(f"{'='*50}")
+                    
+                    results = translate_manga_page(
+                        input_image_path=input_str,
+                        output_folder=args.output,
+                        **common_params
+                    )
+                    
+                    if results.get('translated_image'):
+                        total_processed += 1
+                        all_results.append(('file', input_str, results))
+                        
+                        if not silent:
+                            translated_path = results['output_paths'].get('translated')
+                            if translated_path:
+                                print(f"\nFile '{input_str}' processed successfully!")
+                                print(f"  Output: {translated_path}")
+                    else:
+                        total_failed += 1
+                        if not silent:
+                            print(f"\nFile '{input_str}' failed to process")
+        
+        # Process all collected individual files together in batch mode
+        if args.batch and individual_files:
+            if not silent:
+                print(f"\n{'='*50}")
+                print(f"Batch processing {len(individual_files)} file(s)...")
+                print(f"{'='*50}")
+            
+            results_dict = translate_manga_page_batch(
+                input_image_paths=individual_files,
+                output_folder=args.output,
+                batch_amount=args.batch_amount,
+                **common_params
+            )
+            
+            # Process results
+            for input_str in individual_files:
+                results = results_dict.get(input_str, {})
                 if results.get('translated_image'):
                     total_processed += 1
                     all_results.append(('file', input_str, results))
