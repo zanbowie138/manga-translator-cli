@@ -35,24 +35,20 @@ def load_model(model_path=None):
     current_model_name = model_path
     return current_model
 
-def find_speech_bubbles(image_path, conf_threshold=0.25, iou_threshold=0.45, save_output=True, output_dir="output"):
+def run_detection(model, image_path, conf_threshold=0.25, iou_threshold=0.45):
     """
     Run speech bubble detection on an image
     
     Args:
+        model: Loaded YOLO model
         image_path: Path to input image
         conf_threshold: Confidence threshold (0-1)
         iou_threshold: IoU threshold for NMS (0-1)
-        save_output: Whether to save the output image
-        output_dir: Directory to save output images
     
     Returns:
         results: YOLO results object
-        annotated_image: PIL Image with annotations
     """
-    model = load_model()
-    
-    # Run prediction
+    # Run prediction (without saving to avoid creating predict/ directories)
     print(f"Running inference on: {image_path}")
     results = model.predict(
         source=image_path,
@@ -61,33 +57,50 @@ def find_speech_bubbles(image_path, conf_threshold=0.25, iou_threshold=0.45, sav
         show_labels=True,
         show_conf=True,
         imgsz=640,
-        save=save_output,
-        project=output_dir,
+        save=False,
     )
+    return results
+
+def process_detection_results(results):
+    """
+    Process YOLO detection results to extract annotated image and bounding boxes
     
-    # Get annotated image from results
+    Args:
+        results: YOLO results object
+    
+    Returns:
+        annotated_image: PIL Image with annotations (or None if no detections)
+        boxes: List of bounding boxes as [x1, y1, x2, y2] (or empty list if no detections)
+    """
+    # Get annotated image and boxes from results
     for r in results:
         # r.plot() returns BGR numpy array, convert to RGB PIL Image
         im_array = r.plot()
         annotated_image = Image.fromarray(im_array[..., ::-1])  # BGR to RGB
         
+        # Extract bounding boxes
+        boxes = []
+        for box in r.boxes:
+            bbox = box.xyxy[0].cpu().numpy().tolist()
+            boxes.append(bbox)
+        
         # Print detection info
-        print(f"Found {len(r.boxes)} speech bubbles")
+        print(f"Found {len(boxes)} speech bubbles")
         for i, box in enumerate(r.boxes):
             conf = float(box.conf[0])
             cls = int(box.cls[0])
             print(f"  Bubble {i+1}: confidence={conf:.3f}, class={cls}")
         
-        return r, annotated_image
+        return annotated_image, boxes
     
-    return None, None
+    return None, []
 
 def get_detections(image_path, conf_threshold=0.25, iou_threshold=0.45):
     """
-    Get detection results as a list of dictionaries
+    Get detection results as a list of bounding boxes
     
     Returns:
-        List of detections with 'bbox', 'confidence', 'class', and 'mask' keys
+        List of bounding boxes as [x1, y1, x2, y2]
     """
     model = load_model()
     
@@ -98,60 +111,13 @@ def get_detections(image_path, conf_threshold=0.25, iou_threshold=0.45):
         imgsz=640,
     )
     
-    detections = []
+    boxes = []
     for r in results:
-        for box, mask in zip(r.boxes, r.masks.data if r.masks is not None else [None] * len(r.boxes)):
+        for box in r.boxes:
             # Get bounding box coordinates (xyxy format)
             bbox = box.xyxy[0].cpu().numpy().tolist()
-            conf = float(box.conf[0])
-            cls = int(box.cls[0])
-            
-            detection = {
-                'bbox': bbox,  # [x1, y1, x2, y2]
-                'confidence': conf,
-                'class': cls
-            }
-            
-            # Add mask if available
-            if mask is not None:
-                detection['mask'] = mask.cpu().numpy()
-            
-            detections.append(detection)
+            boxes.append(bbox)
     
-    return detections
+    return boxes
 
-def get_cropped_images(image_path, detections):
-    """
-    Get cropped PIL Images for each detection bounding box
-    
-    Args:
-        image_path: Path to input image
-        detections: List of detections with 'bbox' keys
-    
-    Returns:
-        List of (cropped_image, detection) tuples
-    """
-    # Load original image
-    image = Image.open(image_path).convert("RGB")
-    
-    cropped_images = []
-    
-    for i, det in enumerate(detections):
-        bbox = det['bbox']  # [x1, y1, x2, y2]
-        
-        # Convert to integers and ensure within image bounds
-        x1 = max(0, int(bbox[0]))
-        y1 = max(0, int(bbox[1]))
-        x2 = min(image.width, int(bbox[2]))
-        y2 = min(image.height, int(bbox[3]))
-        
-        # Skip if invalid bounding box
-        if x2 <= x1 or y2 <= y1:
-            continue
-        
-        # Crop the image
-        cropped = image.crop((x1, y1, x2, y2))
-        cropped_images.append((cropped, det))
-    
-    return cropped_images
 

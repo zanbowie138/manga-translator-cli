@@ -2,6 +2,7 @@ import ctranslate2
 import sentencepiece
 from huggingface_hub import snapshot_download
 import os
+import re
 
 # Cache for loaded models
 _translator = None
@@ -9,6 +10,10 @@ _tokenizer_source = None
 _tokenizer_target = None
 _model_path = None
 _device = None
+
+# Japanese character range pattern (excluding middle dot ・ U+30FB)
+# https://stackoverflow.com/questions/30069846/how-to-find-out-chinese-or-japanese-character-in-a-string-in-python
+CJK_CHAR_PATTERN = re.compile(r"[\u3300-\u33ff\ufe30-\ufe4f\uf900-\ufaff\U0002f800-\U0002fa1f\u30a0-\u30fa\u30fc-\u30ff\u2e80-\u2eff\u4e00-\u9fff\u3400-\u4dbf\U00020000-\U0002a6df\U0002a700-\U0002b73f\U0002b740-\U0002b81f\U0002b820-\U0002ceaf]+")
 
 def _load_models(model_path=None, device='cpu'):
     """Load translation models lazily (only once)"""
@@ -54,13 +59,19 @@ def translate_phrase(text, model_path=None, device='cpu', beam_size=5):
         beam_size: Beam size for translation (default 5)
     
     Returns:
-        Translated English text string
+        Tuple of (translated_text, success) where:
+        - translated_text: Translated English text string (empty if no CJK found)
+        - success: True if text contains CJK characters and translation was successful, False otherwise
     """
-    translator, tokenizer_source, tokenizer_target = _load_models(model_path, device)
-    
-    # Skip empty text
+    # Check if text contains CJK characters
     if not text or not text.strip():
-        return ""
+        return "", False
+    
+    has_cjk = bool(CJK_CHAR_PATTERN.search(text))
+    if not has_cjk:
+        return "", False
+    
+    translator, tokenizer_source, tokenizer_target = _load_models(model_path, device)
     
     # Tokenize
     tokenized = tokenizer_source.encode(text, out_type=str)
@@ -71,16 +82,4 @@ def translate_phrase(text, model_path=None, device='cpu', beam_size=5):
     # Decode
     translated_text = tokenizer_target.decode(translated[0].hypotheses[0]).replace('<unk>', '')
     
-    return translated_text
-
-# Example usage
-if __name__ == "__main__":
-    test_strings = [
-        'は静かに前へと歩み出た。',
-        '悲しいGPTと話したことがありますか?'
-    ]
-    
-    for text in test_strings:
-        translated = translate_phrase(text)
-        print(f"Original: {text}")
-        print(f"Translated: {translated}\n")
+    return translated_text, True

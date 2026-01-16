@@ -80,6 +80,64 @@ def merge_boxes(box1, box2):
     return merged
 
 
+def box_contains(box1, box2, threshold=0.0):
+    """
+    Check if box1 strictly contains box2 (box2 is inside box1)
+    
+    Args:
+        box1: [x1, y1, x2, y2] - potential parent
+        box2: [x1, y1, x2, y2] - potential child
+        threshold: Distance threshold for considering boxes
+    
+    Returns:
+        True if box1 contains box2
+    """
+    x1_1, y1_1, x2_1, y2_1 = box1
+    x1_2, y1_2, x2_2, y2_2 = box2
+    
+    # box1 contains box2 if box2 is completely inside box1
+    return (x1_2 >= x1_1 - threshold and y1_2 >= y1_1 - threshold and
+            x2_2 <= x2_1 + threshold and y2_2 <= y2_1 + threshold)
+
+
+def remove_parent_boxes(boxes, threshold=0.0):
+    """
+    Remove parent bounding boxes and keep children.
+    If a box contains another box, remove the parent (outer) and keep the child (inner).
+    
+    Args:
+        boxes: List of bounding boxes as [x1, y1, x2, y2]
+        threshold: Distance threshold for containment check
+    
+    Returns:
+        List of bounding boxes with parent boxes removed
+    """
+    if not boxes:
+        return boxes
+    
+    # Create a copy to work with
+    remaining = boxes.copy()
+    filtered = []
+    
+    while remaining:
+        current_bbox = remaining.pop(0)
+        is_parent = False
+        
+        # Check if current box contains any other box (it's a parent)
+        for other_bbox in remaining:
+            if box_contains(current_bbox, other_bbox, threshold=threshold):
+                is_parent = True
+                break
+        
+        # Only keep boxes that are not parents
+        if not is_parent:
+            filtered.append(current_bbox)
+        else:
+            print(f"  Removed parent box containing child box")
+    
+    return filtered
+
+
 def combine_overlapping_bubbles(detections, touch_threshold=10):
     """
     Combine speech bubble bounding boxes that are inside one another or touching
