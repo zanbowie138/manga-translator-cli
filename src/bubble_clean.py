@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from PIL import Image
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Dict, Optional
 from src.bbox import BoundingBox
 
 
@@ -160,6 +160,7 @@ def visualize_single_bubble_mask(
 def visualize_bubble_masks(
     image: Union[str, np.ndarray, Image.Image],
     boxes: List[Union[List[float], Tuple[float, ...], BoundingBox]],
+    bubble_masks: Dict[BoundingBox, np.ndarray],
     threshold_value: int = 200
 ) -> np.ndarray:
     """
@@ -169,6 +170,7 @@ def visualize_bubble_masks(
     Args:
         image: Input image as file path, numpy array (BGR), or PIL Image
         boxes: List of bounding boxes (can be lists, tuples, or BoundingBox instances)
+        bubble_masks: Dictionary mapping BoundingBox to pre-generated mask arrays
         threshold_value: Threshold value for binary thresholding (default: 200)
     
     Returns:
@@ -193,29 +195,54 @@ def visualize_bubble_masks(
     else:
         output = img_array.copy()
     
-    # Process each bounding box individually
-    for box in boxes:
-        # Convert to BoundingBox if needed
-        if isinstance(box, BoundingBox):
-            bubble_box = box
-        else:
-            bubble_box = BoundingBox.from_list(box) if isinstance(box, list) else BoundingBox.from_tuple(box)
+    # Define colors with transparency (BGR + Alpha)
+    # Use alpha=128 (50% transparency) for better visibility
+    blue_color = np.array([255, 0, 0, 128], dtype=np.uint8)  # Transparent blue (BGR + Alpha)
+    green_color = np.array([0, 255, 0, 128], dtype=np.uint8)  # Transparent green (BGR + Alpha)
+    
+    # Process each bubble using pre-generated masks
+    for bbox, bubble_mask in bubble_masks.items():
         # Clip to image bounds
-        clipped_box = bubble_box.clip(img_array.shape[1], img_array.shape[0])
-        
+        clipped_box = bbox.clip(img_array.shape[1], img_array.shape[0])
         if not clipped_box.is_valid():
             continue
         
         x1, y1, x2, y2 = clipped_box
         
-        # Crop the bubble region
-        bubble_crop = img_array[y1:y2, x1:x2].copy()
+        # Create a region overlay for this bubble
+        bubble_region = output[y1:y2, x1:x2].copy()
         
-        # Visualize this single bubble
-        visualized_bubble = visualize_single_bubble_mask(bubble_crop, threshold_value)
+        # Create mask for area outside bubble but within bounding box
+        box_exterior_mask = 255 - bubble_mask
+        
+        # Create overlay with transparent colors
+        overlay = np.zeros(bubble_region.shape, dtype=np.uint8)
+        
+        # Fill bubble interior with transparent blue
+        bubble_indices = bubble_mask > 0
+        overlay[bubble_indices] = blue_color
+        
+        # Fill area outside bubble (but within bounding box) with transparent green
+        exterior_indices = box_exterior_mask > 0
+        overlay[exterior_indices] = green_color
+        
+        # Blend overlay with original using alpha blending
+        # Formula: result = (alpha * overlay + (1 - alpha) * background)
+        alpha_overlay = overlay[:, :, 3:4] / 255.0  # Normalize alpha to 0-1
+        alpha_background = 1.0 - alpha_overlay
+        
+        # Blend each color channel
+        for c in range(3):  # B, G, R channels
+            bubble_region[:, :, c] = (
+                alpha_overlay[:, :, 0] * overlay[:, :, c] +
+                alpha_background[:, :, 0] * bubble_region[:, :, c]
+            ).astype(np.uint8)
+        
+        # Update alpha channel to maximum of overlay and original
+        bubble_region[:, :, 3] = np.maximum(bubble_region[:, :, 3], overlay[:, :, 3])
         
         # Paste the visualized bubble back into the output image
-        output[y1:y2, x1:x2] = visualized_bubble
+        output[y1:y2, x1:x2] = bubble_region
     
     return output
 

@@ -14,18 +14,15 @@ from PIL import Image
 # Supported image extensions
 SUPPORTED_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG', '.webp', '.WEBP'}
 
-from src.ocr import extract_text
 from src.bubble_detect import load_bubble_detection_model, run_detection
 from src.image_utils import get_cropped_images, save_pil_image
 from src.bbox import BoundingBox, remove_parent_boxes, combine_overlapping_bubbles
-from src.translate import translate_phrase
 from src.draw_text import draw_text_on_image
-from src.bubble_clean import fill_bubble_interiors, visualize_bubble_masks, visualize_single_bubble_mask, get_bubble_text_mask
+from src.bubble_clean import fill_bubble_interiors, get_bubble_text_mask
 
 
 def _setup_output_structure(
     output_folder: str,
-    output_filename: str,
     output_subfolder: Optional[str],
     save_speech_bubbles: bool,
     save_bubble_interiors: bool,
@@ -37,10 +34,9 @@ def _setup_output_structure(
     
     Args:
         output_folder: Base folder path for all outputs
-        output_filename: Output filename (without extension)
         output_subfolder: Optional subfolder name
         save_speech_bubbles: Whether to create speech_bubbles folder
-        save_bubble_interiors: Whether to create bubble_interiors folder
+        save_bubble_interiors: Whether to create bubble_masks folder
         save_cleaned: Whether to create cleaned folder
         save_translated: Whether to create translated folder
     
@@ -54,7 +50,7 @@ def _setup_output_structure(
     if save_speech_bubbles:
         _get_output_dir_path(output_base, "speech_bubbles", output_subfolder).mkdir(parents=True, exist_ok=True)
     if save_bubble_interiors:
-        _get_output_dir_path(output_base, "bubble_interiors", output_subfolder).mkdir(parents=True, exist_ok=True)
+        _get_output_dir_path(output_base, "bubble_masks", output_subfolder).mkdir(parents=True, exist_ok=True)
     if save_cleaned:
         _get_output_dir_path(output_base, "cleaned", output_subfolder).mkdir(parents=True, exist_ok=True)
     if save_translated:
@@ -171,7 +167,7 @@ def _create_bubble_interiors_visualization(
     silent: bool = False
 ) -> Tuple[Optional[Image.Image], Dict[str, Any]]:
     """
-    Create visualization of bubble interiors using pre-generated bubble masks.
+    Create visualization of bubble interiors by painting bubble masks with transparent blue and green.
     
     Args:
         input_image: Input PIL Image
@@ -190,61 +186,31 @@ def _create_bubble_interiors_visualization(
         return None, {}
     
     if not silent:
-        print("Creating bubble interiors visualization...")
+        print("Creating bubble masks visualization...")
     
-    # Convert PIL Image to BGR numpy array
-    img_array = np.array(input_image.convert("RGB"))
-    img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+    # Use visualize_bubble_masks with pre-generated masks
+    from src.bubble_clean import visualize_bubble_masks
     
-    # Convert to BGRA (add alpha channel)
-    output = cv2.cvtColor(img_array, cv2.COLOR_BGR2BGRA)
+    # Extract boxes from bubble_texts
+    boxes = [bbox for bbox, _ in bubble_texts]
     
-    # Define colors with transparency (BGR + Alpha)
-    blue_color = np.array([255, 0, 0, 128], dtype=np.uint8)  # Transparent blue (BGR + Alpha)
-    green_color = np.array([0, 255, 0, 128], dtype=np.uint8)  # Transparent green (BGR + Alpha)
-    
-    # Process each bubble using pre-generated masks
-    for bbox, _ in bubble_texts:
-        if bbox not in bubble_masks:
-            continue
-        
-        # Clip to image bounds
-        clipped_box = bbox.clip(img_array.shape[1], img_array.shape[0])
-        if not clipped_box.is_valid():
-            continue
-        
-        x1, y1, x2, y2 = clipped_box
-        
-        # Get the pre-generated bubble mask
-        bubble_mask = bubble_masks[bbox]
-        
-        # Create a region overlay for this bubble
-        bubble_region = output[y1:y2, x1:x2].copy()
-        
-        # Create mask for area outside bubble but within bounding box
-        box_exterior_mask = 255 - bubble_mask
-        
-        # Fill bubble interior with transparent blue
-        bubble_indices = bubble_mask > 0
-        bubble_region[bubble_indices] = blue_color
-        
-        # Fill area outside bubble (but within bounding box) with transparent green
-        exterior_indices = box_exterior_mask > 0
-        bubble_region[exterior_indices] = green_color
-        
-        # Paste the visualized bubble back into the output image
-        output[y1:y2, x1:x2] = bubble_region
+    # visualize_bubble_masks returns BGRA numpy array
+    output_bgra = visualize_bubble_masks(
+        image=input_image,
+        boxes=boxes,
+        bubble_masks=bubble_masks
+    )
     
     # Convert BGRA numpy array to RGBA PIL Image
-    bubble_masks_rgba = cv2.cvtColor(output, cv2.COLOR_BGRA2RGBA)
+    bubble_masks_rgba = cv2.cvtColor(output_bgra, cv2.COLOR_BGRA2RGBA)
     bubble_masks_pil = Image.fromarray(bubble_masks_rgba)
     
     output_paths = {}
-    bubble_interiors_path = _get_output_file_path(
-        output_base, "bubble_interiors", f"{output_filename}_bubble_interiors.png", output_subfolder
+    bubble_masks_path = _get_output_file_path(
+        output_base, "bubble_masks", f"{output_filename}_bubble_masks.png", output_subfolder
     )
-    save_pil_image(bubble_masks_pil, str(bubble_interiors_path), print_message=not silent)
-    output_paths['bubble_interiors'] = str(bubble_interiors_path)
+    save_pil_image(bubble_masks_pil, str(bubble_masks_path), print_message=not silent)
+    output_paths['bubble_masks'] = str(bubble_masks_path)
     
     return bubble_masks_pil, output_paths
 
@@ -278,7 +244,7 @@ def _extract_and_translate_text(
     """
     if not silent:
         print("\n" + "=" * 50)
-        print("Running OCR on all speech bubbles (batch processing)...")
+        print("Running OCR on all speech bubbles...")
         print("=" * 50)
     
     # Step 1: Batch extract text from all bubbles
@@ -689,7 +655,6 @@ def translate_manga_page(
     # Set up output folder structure
     output_base = _setup_output_structure(
         output_folder,
-        output_filename,
         output_subfolder,
         save_speech_bubbles,
         save_bubble_interiors,
