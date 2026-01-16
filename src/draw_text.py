@@ -4,6 +4,7 @@ import platform
 import os
 import cv2
 import numpy as np
+from src.bbox import BoundingBox
 
 def _get_system_font_path():
     """Try to find a system font path"""
@@ -156,12 +157,12 @@ def draw_text_with_outline(draw, text, position, font, fill_color='black', outli
     # Draw main text on top
     draw.text(position, text, font=font, fill=fill_color)
 
-def draw_text_on_image(image_path, box_texts, bubble_masks, font_path=None):
+def draw_text_on_image(image: Image.Image, box_texts, bubble_masks, font_path=None):
     """
     Draw translated text on the original image within bubble interior shapes
     
     Args:
-        image_path: Path to original image
+        image: Input PIL Image
         box_texts: List of (bbox, translated_text) tuples where bbox is a BoundingBox instance
         bubble_masks: Dictionary mapping BoundingBox to bubble_mask numpy array
         font_path: Path to font file (None to try system font)
@@ -169,8 +170,8 @@ def draw_text_on_image(image_path, box_texts, bubble_masks, font_path=None):
     Returns:
         PIL Image with translated text drawn on it
     """
-    # Load image as PIL for drawing
-    image = Image.open(image_path).convert("RGB")
+    # Ensure image is in RGB mode
+    image = image.convert("RGB")
     draw = ImageDraw.Draw(image)
     
     for bbox, translated_text in box_texts:

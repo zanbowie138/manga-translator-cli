@@ -232,7 +232,7 @@ def main():
         save_cleaned = args.save_cleaned
         save_translated = not args.no_translated
     
-    verbose = not args.quiet
+    silent = args.quiet
     
     # Common parameters for both functions
     common_params = {
@@ -251,7 +251,7 @@ def main():
         'save_bubble_interiors': save_bubble_interiors,
         'save_cleaned': save_cleaned,
         'save_translated': save_translated,
-        'verbose': verbose
+        'silent': silent
     }
     
     try:
@@ -265,7 +265,7 @@ def main():
             
             if input_path.is_dir():
                 # Process folder
-                if verbose:
+                if not silent:
                     print(f"\n{'='*50}")
                     print(f"Processing folder: {input_str}")
                     print(f"{'='*50}")
@@ -281,7 +281,7 @@ def main():
                 total_failed += results['failed_count']
                 all_results.append(('folder', input_str, results))
                 
-                if verbose:
+                if not silent:
                     print(f"\nFolder '{input_str}' summary:")
                     print(f"  Total files: {results['total_files']}")
                     print(f"  Successfully processed: {results['successful_count']}")
@@ -289,7 +289,7 @@ def main():
             
             elif input_path.is_file() and input_path.suffix in supported_extensions:
                 # Process single file
-                if verbose:
+                if not silent:
                     print(f"\n{'='*50}")
                     print(f"Processing file: {input_str}")
                     print(f"{'='*50}")
@@ -304,18 +304,18 @@ def main():
                     total_processed += 1
                     all_results.append(('file', input_str, results))
                     
-                    if verbose:
+                    if not silent:
                         translated_path = results['output_paths'].get('translated')
                         if translated_path:
                             print(f"\nFile '{input_str}' processed successfully!")
                             print(f"  Output: {translated_path}")
                 else:
                     total_failed += 1
-                    if verbose:
+                    if not silent:
                         print(f"\nFile '{input_str}' failed to process")
         
         # Print overall summary if multiple inputs
-        if len(args.input) > 1 and verbose:
+        if len(args.input) > 1 and not silent:
             print(f"\n{'='*50}")
             print("Overall Summary")
             print(f"{'='*50}")
@@ -328,7 +328,7 @@ def main():
         sys.exit(130)
     except Exception as e:
         print(f"\nError: {e}", file=sys.stderr)
-        if verbose:
+        if not silent:
             import traceback
             traceback.print_exc()
         sys.exit(1)

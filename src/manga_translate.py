@@ -7,6 +7,7 @@ This module provides a reusable function for translating manga pages
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 import sys
+import numpy as np
 import cv2
 from PIL import Image
 
@@ -14,12 +15,472 @@ from PIL import Image
 SUPPORTED_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG', '.webp', '.WEBP'}
 
 from src.ocr import extract_text
-from src.bubble import load_model, run_detection, process_detection_results
+from src.bubble_detect import load_bubble_detection_model, run_detection
 from src.image_utils import get_cropped_images, save_pil_image
-from src.bbox import BoundingBox, remove_parent_boxes, combine_overlapping_bubbles, normalize_boxes
+from src.bbox import BoundingBox, remove_parent_boxes, combine_overlapping_bubbles
 from src.translate import translate_phrase
 from src.draw_text import draw_text_on_image
-from src.bubble_clean import fill_bubble_interiors, visualize_bubble_masks, get_bubble_text_mask
+from src.bubble_clean import fill_bubble_interiors, visualize_bubble_masks, visualize_single_bubble_mask, get_bubble_text_mask
+
+
+def _setup_output_structure(
+    output_folder: str,
+    output_filename: str,
+    output_subfolder: Optional[str],
+    save_speech_bubbles: bool,
+    save_bubble_interiors: bool,
+    save_cleaned: bool,
+    save_translated: bool
+) -> Path:
+    """
+    Set up output folder structure and return output base path.
+    
+    Args:
+        output_folder: Base folder path for all outputs
+        output_filename: Output filename (without extension)
+        output_subfolder: Optional subfolder name
+        save_speech_bubbles: Whether to create speech_bubbles folder
+        save_bubble_interiors: Whether to create bubble_interiors folder
+        save_cleaned: Whether to create cleaned folder
+        save_translated: Whether to create translated folder
+    
+    Returns:
+        Path to output base directory
+    """
+    output_base = Path(output_folder)
+    output_base.mkdir(parents=True, exist_ok=True)
+    
+    # Create subfolders for each output type
+    if save_speech_bubbles:
+        _get_output_dir_path(output_base, "speech_bubbles", output_subfolder).mkdir(parents=True, exist_ok=True)
+    if save_bubble_interiors:
+        _get_output_dir_path(output_base, "bubble_interiors", output_subfolder).mkdir(parents=True, exist_ok=True)
+    if save_cleaned:
+        _get_output_dir_path(output_base, "cleaned", output_subfolder).mkdir(parents=True, exist_ok=True)
+    if save_translated:
+        _get_output_dir_path(output_base, "translated", output_subfolder).mkdir(parents=True, exist_ok=True)
+    
+    return output_base
+
+
+def _detect_speech_bubbles(
+    input_image: Image.Image,
+    detection_model: Any,
+    conf_threshold: float,
+    iou_threshold: float,
+    save_speech_bubbles: bool,
+    output_base: Path,
+    output_filename: str,
+    output_subfolder: Optional[str],
+    silent: bool = False
+) -> Tuple[Optional[Image.Image], List[BoundingBox], Dict[str, Any]]:
+    """
+    Detect speech bubbles in the image.
+    
+    Args:
+        input_image: Input PIL Image
+        detection_model: Pre-loaded YOLO model
+        conf_threshold: Confidence threshold for detection
+        iou_threshold: IoU threshold for NMS
+        save_speech_bubbles: Whether to save annotated image
+        output_base: Base output directory
+        output_filename: Output filename
+        output_subfolder: Optional subfolder name
+        silent: If True, suppress progress messages
+    
+    Returns:
+        Tuple of (annotated_image, boxes, output_paths_dict)
+    """
+    if not silent:
+        print("Running speech bubble detection...")
+    
+    annotated_bubble_img, boxes = run_detection(
+        detection_model,
+        input_image,
+        conf_threshold=conf_threshold,
+        iou_threshold=iou_threshold,
+        silent=silent
+    )
+    
+    output_paths = {}
+    
+    if not silent and annotated_bubble_img:
+        print(f"Total detections: {len(boxes)} speech bubbles found")
+    
+    # Save annotated image if requested
+    if save_speech_bubbles and annotated_bubble_img:
+        speech_bubbles_path = _get_output_file_path(
+            output_base, "speech_bubbles", f"{output_filename}_speech_bubbles.png", output_subfolder
+        )
+        save_pil_image(annotated_bubble_img, str(speech_bubbles_path), print_message=not silent)
+        output_paths['speech_bubbles'] = str(speech_bubbles_path)
+    
+    return annotated_bubble_img, boxes, output_paths
+
+
+def _process_bounding_boxes(
+    boxes: List[BoundingBox],
+    bbox_processing: str,
+    parent_box_threshold: float,
+    silent: bool = False
+) -> List[BoundingBox]:
+    """
+    Process bounding boxes based on the specified mode.
+    
+    Args:
+        boxes: List of detected bounding boxes
+        bbox_processing: Processing mode ('remove-parent', 'combine-children', or 'none')
+        parent_box_threshold: Threshold for processing
+        silent: If True, suppress progress messages
+    
+    Returns:
+        List of processed bounding boxes
+    """
+    if not boxes:
+        if not silent:
+            print("No speech bubbles detected.")
+        return []
+    
+    if bbox_processing == 'remove-parent':
+        if not silent:
+            print("\nProcessing compound speech bubbles: removing parent boxes, keeping only children...")
+        filtered_bboxes = remove_parent_boxes(boxes, threshold=parent_box_threshold)
+    elif bbox_processing == 'combine-children':
+        if not silent:
+            print("\nProcessing compound speech bubbles: combining overlapping/touching bubbles...")
+        filtered_bboxes = combine_overlapping_bubbles(boxes, touch_threshold=parent_box_threshold)
+    else:  # 'none'
+        if not silent:
+            print("\nNo compound speech bubble processing applied...")
+        filtered_bboxes = boxes
+    
+    if not silent:
+        print(f"After processing: {len(filtered_bboxes)} speech bubbles")
+    
+    return filtered_bboxes
+
+
+def _create_bubble_interiors_visualization(
+    input_image: Image.Image,
+    bubble_texts: List[Tuple[BoundingBox, str]],
+    bubble_masks: Dict[BoundingBox, np.ndarray],
+    save_bubble_interiors: bool,
+    output_base: Path,
+    output_filename: str,
+    output_subfolder: Optional[str],
+    silent: bool = False
+) -> Tuple[Optional[Image.Image], Dict[str, Any]]:
+    """
+    Create visualization of bubble interiors using pre-generated bubble masks.
+    
+    Args:
+        input_image: Input PIL Image
+        bubble_texts: List of (bbox, translated_text) tuples
+        bubble_masks: Dictionary mapping BoundingBox to mask arrays
+        save_bubble_interiors: Whether to save visualization
+        output_base: Base output directory
+        output_filename: Output filename
+        output_subfolder: Optional subfolder name
+        silent: If True, suppress progress messages
+    
+    Returns:
+        Tuple of (bubble_masks_image, output_paths_dict)
+    """
+    if not save_bubble_interiors:
+        return None, {}
+    
+    if not silent:
+        print("Creating bubble interiors visualization...")
+    
+    # Convert PIL Image to BGR numpy array
+    img_array = np.array(input_image.convert("RGB"))
+    img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+    
+    # Convert to BGRA (add alpha channel)
+    output = cv2.cvtColor(img_array, cv2.COLOR_BGR2BGRA)
+    
+    # Define colors with transparency (BGR + Alpha)
+    blue_color = np.array([255, 0, 0, 128], dtype=np.uint8)  # Transparent blue (BGR + Alpha)
+    green_color = np.array([0, 255, 0, 128], dtype=np.uint8)  # Transparent green (BGR + Alpha)
+    
+    # Process each bubble using pre-generated masks
+    for bbox, _ in bubble_texts:
+        if bbox not in bubble_masks:
+            continue
+        
+        # Clip to image bounds
+        clipped_box = bbox.clip(img_array.shape[1], img_array.shape[0])
+        if not clipped_box.is_valid():
+            continue
+        
+        x1, y1, x2, y2 = clipped_box
+        
+        # Get the pre-generated bubble mask
+        bubble_mask = bubble_masks[bbox]
+        
+        # Create a region overlay for this bubble
+        bubble_region = output[y1:y2, x1:x2].copy()
+        
+        # Create mask for area outside bubble but within bounding box
+        box_exterior_mask = 255 - bubble_mask
+        
+        # Fill bubble interior with transparent blue
+        bubble_indices = bubble_mask > 0
+        bubble_region[bubble_indices] = blue_color
+        
+        # Fill area outside bubble (but within bounding box) with transparent green
+        exterior_indices = box_exterior_mask > 0
+        bubble_region[exterior_indices] = green_color
+        
+        # Paste the visualized bubble back into the output image
+        output[y1:y2, x1:x2] = bubble_region
+    
+    # Convert BGRA numpy array to RGBA PIL Image
+    bubble_masks_rgba = cv2.cvtColor(output, cv2.COLOR_BGRA2RGBA)
+    bubble_masks_pil = Image.fromarray(bubble_masks_rgba)
+    
+    output_paths = {}
+    bubble_interiors_path = _get_output_file_path(
+        output_base, "bubble_interiors", f"{output_filename}_bubble_interiors.png", output_subfolder
+    )
+    save_pil_image(bubble_masks_pil, str(bubble_interiors_path), print_message=not silent)
+    output_paths['bubble_interiors'] = str(bubble_interiors_path)
+    
+    return bubble_masks_pil, output_paths
+
+
+def _extract_and_translate_text(
+    cropped_images: List[Tuple[Image.Image, BoundingBox]],
+    ocr_model_id: str,
+    ocr_max_new_tokens: int,
+    translation_model_path: Optional[str],
+    translation_device: str,
+    translation_beam_size: int,
+    verbose: bool
+) -> Tuple[List[Tuple[BoundingBox, str]], List[BoundingBox]]:
+    """
+    Extract text from each bubble using OCR and translate it.
+    
+    Args:
+        cropped_images: List of (cropped_image, bbox) tuples
+        ocr_model_id: Hugging Face model ID for OCR
+        ocr_max_new_tokens: Maximum tokens for OCR generation
+        translation_model_path: Path to translation model
+        translation_device: Device for translation
+        translation_beam_size: Beam size for translation
+        verbose: Whether to print progress
+    
+    Returns:
+        Tuple of (bubble_texts, japanese_bboxes) where:
+        - bubble_texts: List of (bbox, translated_text) tuples
+        - japanese_bboxes: List of bounding boxes containing Japanese text
+    """
+    if verbose:
+        print("\n" + "=" * 50)
+        print("Running OCR on each speech bubble...")
+        print("=" * 50)
+    
+    bubble_texts = []  # List of (bbox, translated_text) tuples
+    japanese_bboxes = []  # Track which bubbles contain Japanese
+    
+    for i, (cropped_img, bbox) in enumerate(cropped_images, 1):
+        if verbose:
+            print(f"\n--- Speech Bubble {i} ---")
+            print(f"Bounding box: {bbox}")
+        translated_text = ""
+        translation_success = False
+        try:
+            extracted_text = extract_text(cropped_img, model_id=ocr_model_id, max_new_tokens=ocr_max_new_tokens)
+            if verbose:
+                sys.stdout.reconfigure(encoding='utf-8')
+                print(f"Original text: {extracted_text}")
+            
+            # Translate the extracted text (includes CJK check)
+            if extracted_text.strip():
+                try:
+                    translated_text, translation_success = translate_phrase(
+                        extracted_text,
+                        model_path=translation_model_path,
+                        device=translation_device,
+                        beam_size=translation_beam_size
+                    )
+                    if translation_success:
+                        if verbose:
+                            print(f"Translated: {translated_text}")
+                    else:
+                        if verbose:
+                            print(f"  Skipping bubble {i}: No Japanese text detected")
+                except Exception as e:
+                    if verbose:
+                        print(f"Error translating bubble {i}: {e}")
+        except Exception as e:
+            if verbose:
+                print(f"Error extracting text from bubble {i}: {e}")
+        
+        # Only process bubbles with successful translation (has CJK)
+        if translation_success:
+            japanese_bboxes.append(bbox)
+            if translated_text:
+                bubble_texts.append((bbox, translated_text))
+    
+    return bubble_texts, japanese_bboxes
+
+
+def _generate_bubble_masks(
+    input_image: Image.Image,
+    bubble_texts: List[Tuple[BoundingBox, str]],
+    threshold_value: int,
+    silent: bool = False
+) -> Dict[BoundingBox, np.ndarray]:
+    """
+    Generate bubble masks for drawing translated text.
+    
+    Args:
+        input_image: Input PIL Image
+        bubble_texts: List of (bbox, translated_text) tuples
+        threshold_value: Threshold for bubble mask detection
+        silent: If True, suppress progress messages
+    
+    Returns:
+        Dictionary mapping BoundingBox to mask arrays
+    """
+    if not silent:
+        print("\n" + "=" * 50)
+        print("Generating bubble masks...")
+        print("=" * 50)
+    
+    # Convert PIL Image to BGR numpy array
+    img_array = np.array(input_image.convert("RGB"))
+    img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+    
+    # Generate masks for all bubbles with translations
+    bubble_masks = {}
+    for bbox, _ in bubble_texts:
+        # Clip bounding box to image bounds
+        clipped_box = bbox.clip(img_array.shape[1], img_array.shape[0])
+        
+        # Validate that the box is valid
+        if not clipped_box.is_valid():
+            continue
+        
+        x1, y1, x2, y2 = clipped_box
+        
+        # Crop the bubble
+        bubble_crop = img_array[y1:y2, x1:x2].copy()
+        
+        # Get bubble interior mask
+        bubble_mask, _ = get_bubble_text_mask(bubble_crop, threshold_value=threshold_value)
+        bubble_masks[bbox] = bubble_mask  # Use BoundingBox as key (it's hashable)
+    
+    return bubble_masks
+
+
+def _clean_bubble_interiors(
+    input_image: Image.Image,
+    japanese_bboxes: List[BoundingBox],
+    threshold_value: int,
+    save_cleaned: bool,
+    output_base: Path,
+    output_filename: str,
+    output_subfolder: Optional[str],
+    silent: bool = False
+) -> Tuple[Image.Image, Dict[str, Any]]:
+    """
+    Fill bubble interiors with base color.
+    
+    Args:
+        input_image: Input PIL Image
+        japanese_bboxes: List of bounding boxes containing Japanese text
+        threshold_value: Threshold for bubble mask detection
+        save_cleaned: Whether to save cleaned image
+        output_base: Base output directory
+        output_filename: Output filename
+        output_subfolder: Optional subfolder name
+        silent: If True, suppress progress messages
+    
+    Returns:
+        Tuple of (cleaned_image_pil, output_paths_dict)
+    """
+    if not silent:
+        print("\n" + "=" * 50)
+        print("Clearing speech bubbles...")
+        print("=" * 50)
+    
+    # Fill bubble interiors with base color (only for bubbles with Japanese text)
+    cleaned_image = fill_bubble_interiors(
+        input_image,
+        japanese_bboxes,
+        threshold_value=threshold_value
+    )
+    
+    # Convert BGR numpy array to RGB PIL Image
+    cleaned_image_rgb = cv2.cvtColor(cleaned_image, cv2.COLOR_BGR2RGB)
+    cleaned_image_pil = Image.fromarray(cleaned_image_rgb)
+    
+    output_paths = {}
+    
+    # Save cleaned image if requested
+    if save_cleaned:
+        cleaned_path = _get_output_file_path(
+            output_base, "cleaned", f"{output_filename}_cleaned.png", output_subfolder
+        )
+        save_pil_image(cleaned_image_pil, str(cleaned_path), print_message=not silent)
+        output_paths['cleaned'] = str(cleaned_path)
+    
+    return cleaned_image_pil, output_paths
+
+
+def _draw_translated_text(
+    cleaned_image: Image.Image,
+    bubble_texts: List[Tuple[BoundingBox, str]],
+    bubble_masks: Dict[BoundingBox, np.ndarray],
+    font_path: Optional[str],
+    save_translated: bool,
+    output_base: Path,
+    output_filename: str,
+    output_subfolder: Optional[str],
+    silent: bool = False
+) -> Tuple[Image.Image, Dict[str, Any]]:
+    """
+    Draw translated text on the cleaned image.
+    
+    Args:
+        cleaned_image: Cleaned PIL Image
+        bubble_texts: List of (bbox, translated_text) tuples
+        bubble_masks: Dictionary mapping BoundingBox to mask arrays
+        font_path: Path to font file
+        save_translated: Whether to save translated image
+        output_base: Base output directory
+        output_filename: Output filename
+        output_subfolder: Optional subfolder name
+        silent: If True, suppress progress messages
+    
+    Returns:
+        Tuple of (translated_image, output_paths_dict)
+    """
+    if not silent:
+        print("\n" + "=" * 50)
+        print("Drawing translated text on image...")
+        print("=" * 50)
+    
+    translated_image = draw_text_on_image(
+        cleaned_image,
+        bubble_texts,  # List of (bbox, translated_text) tuples
+        bubble_masks,  # Dictionary of bbox -> mask
+        font_path=font_path
+    )
+    
+    output_paths = {}
+    
+    # Save translated image if requested
+    if save_translated:
+        translated_path = _get_output_file_path(
+            output_base, "translated", f"{output_filename}_translated.png", output_subfolder
+        )
+        save_pil_image(translated_image, str(translated_path), print_message=not silent)
+        output_paths['translated'] = str(translated_path)
+    
+    return translated_image, output_paths
 
 
 
@@ -89,7 +550,7 @@ def translate_manga_page(
     # Filename customization
     output_filename: Optional[str] = None,  # If None, use input filename
     output_subfolder: Optional[str] = None,  # Optional subfolder name (e.g., for folder processing)
-    verbose: bool = True
+    silent: bool = False
 ) -> Dict[str, Any]:
     """
     Comprehensive function to translate a manga page from Japanese to English.
@@ -127,7 +588,7 @@ def translate_manga_page(
     
     Returns:
         Dictionary containing:
-        - 'annotated_image': PIL Image with detected bubbles (or None)
+        - 'annotated_bubble_image': PIL Image with detected bubbles (or None)
         - 'boxes': List of detected BoundingBox instances
         - 'filtered_boxes': List of BoundingBox instances after removing parent boxes
         - 'blue_image': PIL Image with blue bubble interiors (or None)
@@ -135,18 +596,20 @@ def translate_manga_page(
         - 'translated_image': PIL Image with translated text (or None)
         - 'bubble_texts': List of (BoundingBox, translated_text) tuples
         - 'bubble_masks': Dictionary mapping BoundingBox to mask arrays
+        - 'bubble_interiors_visualization': PIL Image with bubble interiors visualization (or None)
         - 'output_paths': Dictionary with saved file paths
     """
     # Initialize result dictionary
     results: Dict[str, Any] = {
-        'annotated_image': None,
+        'annotated_bubble_image': None,
         'boxes': [],
         'filtered_boxes': [],
         'blue_image': None,
         'cleaned_image': None,
         'translated_image': None,
         'bubble_texts': [],
-        'bubble_masks': {},
+        'bubble_masks': {},  # Dictionary mapping BoundingBox to mask arrays
+        'bubble_interiors_visualization': None,  # PIL Image visualization
         'output_paths': {}
     }
     
@@ -155,271 +618,147 @@ def translate_manga_page(
         input_path = Path(input_image_path)
         output_filename = input_path.stem
     
-    # Create output folder structure
-    output_base = Path(output_folder)
-    output_base.mkdir(parents=True, exist_ok=True)
-    
-    # Create subfolders for each output type
-    if save_speech_bubbles:
-        _get_output_dir_path(output_base, "speech_bubbles", output_subfolder).mkdir(parents=True, exist_ok=True)
-    if save_bubble_interiors:
-        _get_output_dir_path(output_base, "bubble_interiors", output_subfolder).mkdir(parents=True, exist_ok=True)
-    if save_cleaned:
-        _get_output_dir_path(output_base, "cleaned", output_subfolder).mkdir(parents=True, exist_ok=True)
-    if save_translated:
-        _get_output_dir_path(output_base, "translated", output_subfolder).mkdir(parents=True, exist_ok=True)
+    # Set up output folder structure
+    output_base = _setup_output_structure(
+        output_folder,
+        output_filename,
+        output_subfolder,
+        save_speech_bubbles,
+        save_bubble_interiors,
+        save_cleaned,
+        save_translated
+    )
     
     try:
+        # Load the input image
+        input_image = Image.open(input_image_path).convert("RGB")
+        
         # Load detection model
         if detection_model is None:
-            if verbose:
+            if not silent:
                 print("Loading detection model...")
-            detection_model = load_model()
+            detection_model = load_bubble_detection_model()
         
         # Detect speech bubbles
-        if verbose:
-            print("Running speech bubble detection...")
-        
-        detection_results = run_detection(
-            detection_model, 
-            input_image_path, 
-            conf_threshold=conf_threshold, 
-            iou_threshold=iou_threshold
+        annotated_bubble_img, boxes, output_paths = _detect_speech_bubbles(
+            input_image,
+            detection_model,
+            conf_threshold,
+            iou_threshold,
+            save_speech_bubbles,
+            output_base,
+            output_filename,
+            output_subfolder,
+            silent
         )
         
-        annotated_img, boxes = process_detection_results(detection_results)
-        
-        # Boxes are already BoundingBox instances from process_detection_results
-        
-        results['annotated_image'] = annotated_img
+        results['annotated_bubble_image'] = annotated_bubble_img
         results['boxes'] = boxes
-        
-        if verbose and annotated_img:
-            print(f"Total detections: {len(boxes)} speech bubbles found")
-        
-        # Save annotated image if requested
-        if save_speech_bubbles and annotated_img:
-            speech_bubbles_path = _get_output_file_path(
-                output_base, "speech_bubbles", f"{output_filename}_speech_bubbles.png", output_subfolder
-            )
-            save_pil_image(annotated_img, str(speech_bubbles_path), print_message=verbose)
-            results['output_paths']['speech_bubbles'] = str(speech_bubbles_path)
+        results['output_paths'].update(output_paths)
         
         # Process bounding boxes based on mode
-        if not boxes:
-            if verbose:
-                print("No speech bubbles detected.")
-            return results
-        
-        if bbox_processing == 'remove-parent':
-            if verbose:
-                print("\nProcessing compound speech bubbles: removing parent boxes, keeping only children...")
-            filtered_bboxes = remove_parent_boxes(boxes, threshold=parent_box_threshold)
-        elif bbox_processing == 'combine-children':
-            if verbose:
-                print("\nProcessing compound speech bubbles: combining overlapping/touching bubbles...")
-            filtered_bboxes = combine_overlapping_bubbles(boxes, touch_threshold=parent_box_threshold)
-        else:  # 'none'
-            if verbose:
-                print("\nNo compound speech bubble processing applied...")
-            filtered_bboxes = boxes
-        
-        # Filtered boxes are already BoundingBox instances
+        filtered_bboxes = _process_bounding_boxes(
+            boxes,
+            bbox_processing,
+            parent_box_threshold,
+            silent
+        )
         
         results['filtered_boxes'] = filtered_bboxes
-        if verbose:
-            print(f"After processing: {len(filtered_bboxes)} speech bubbles")
         
-        # Create image with all bubble interiors colored blue (if requested)
-        if save_bubble_interiors:
-            if verbose:
-                print("Visualizing bubble interiors...")
-            blue_image = visualize_bubble_masks(
-                input_image_path,
-                filtered_bboxes,
-                threshold_value=threshold_value
-            )
-            # Convert BGRA numpy array to RGBA PIL Image
-            if blue_image.shape[2] == 4:
-                blue_image_rgba = cv2.cvtColor(blue_image, cv2.COLOR_BGRA2RGBA)
-                blue_image_pil = Image.fromarray(blue_image_rgba)
-            else:
-                # Fallback for BGR (shouldn't happen with new implementation)
-                blue_image_rgb = cv2.cvtColor(blue_image, cv2.COLOR_BGR2RGB)
-                blue_image_pil = Image.fromarray(blue_image_rgb)
-            results['blue_image'] = blue_image_pil
-            
-            bubble_interiors_path = _get_output_file_path(
-                output_base, "bubble_interiors", f"{output_filename}_bubble_interiors.png", output_subfolder
-            )
-            save_pil_image(blue_image_pil, str(bubble_interiors_path), print_message=verbose)
-            results['output_paths']['bubble_interiors'] = str(bubble_interiors_path)
+        if not filtered_bboxes:
+            return results
         
         # Crop individual speech bubbles
-        if verbose:
+        if not silent:
             print("\nCropping speech bubbles...")
-        cropped_images = get_cropped_images(input_image_path, filtered_bboxes)
-        if verbose:
+        cropped_images = get_cropped_images(input_image, filtered_bboxes)
+        if not silent:
             print(f"Cropped {len(cropped_images)} speech bubble images")
         
-        # Run OCR on each speech bubble and translate
-        if verbose:
-            print("\n" + "=" * 50)
-            print("Running OCR on each speech bubble...")
-            print("=" * 50)
-        
-        bubble_texts = []  # List of (bbox, translated_text) tuples
-        japanese_bboxes = []  # Track which bubbles contain Japanese
-        
-        for i, (cropped_img, bbox) in enumerate(cropped_images, 1):
-            if verbose:
-                print(f"\n--- Speech Bubble {i} ---")
-                print(f"Bounding box: {bbox}")
-            translated_text = ""
-            translation_success = False
-            try:
-                extracted_text = extract_text(cropped_img, model_id=ocr_model_id, max_new_tokens=ocr_max_new_tokens)
-                if verbose:
-                    sys.stdout.reconfigure(encoding='utf-8')
-                    print(f"Original text: {extracted_text}")
-                
-                # Translate the extracted text (includes CJK check)
-                if extracted_text.strip():
-                    try:
-                        translated_text, translation_success = translate_phrase(
-                            extracted_text,
-                            model_path=translation_model_path,
-                            device=translation_device,
-                            beam_size=translation_beam_size
-                        )
-                        if translation_success:
-                            if verbose:
-                                print(f"Translated: {translated_text}")
-                        else:
-                            if verbose:
-                                print(f"  Skipping bubble {i}: No Japanese text detected")
-                    except Exception as e:
-                        if verbose:
-                            print(f"Error translating bubble {i}: {e}")
-            except Exception as e:
-                if verbose:
-                    print(f"Error extracting text from bubble {i}: {e}")
-            
-            # Only process bubbles with successful translation (has CJK)
-            if translation_success:
-                japanese_bboxes.append(bbox)
-                if translated_text:
-                    bubble_texts.append((bbox, translated_text))
+        # Extract and translate text
+        bubble_texts, japanese_bboxes = _extract_and_translate_text(
+            cropped_images,
+            ocr_model_id,
+            ocr_max_new_tokens,
+            translation_model_path,
+            translation_device,
+            translation_beam_size,
+            silent
+        )
         
         results['bubble_texts'] = bubble_texts
         
-        # Clear speech bubbles before drawing translated text
+        # Check if we have any Japanese text to translate
         if not bubble_texts:
-            if verbose:
+            if not silent:
                 print("\nNo Japanese text found in any bubbles.")
             return results
         
-        if verbose:
-            print("\n" + "=" * 50)
-            print("Clearing speech bubbles...")
-            print("=" * 50)
-        
-        # Generate bubble masks for drawing (before cleaning so we can use the original image)
-        if verbose:
-            print("\n" + "=" * 50)
-            print("Generating bubble masks...")
-            print("=" * 50)
-        
-        # Load image for mask generation
-        img_array = cv2.imread(input_image_path)
-        if img_array is None:
-            raise ValueError(f"Could not load image from {input_image_path}")
-        
-        # Generate masks for all bubbles with translations
-        bubble_masks = {}
-        for bbox, _ in bubble_texts:
-            # Ensure bbox is a BoundingBox instance
-            if not isinstance(bbox, BoundingBox):
-                bbox = BoundingBox.from_list(bbox) if isinstance(bbox, list) else BoundingBox.from_tuple(bbox)
-            
-            # Clip bounding box to image bounds
-            clipped_box = bbox.clip(img_array.shape[1], img_array.shape[0])
-            
-            # Validate that the box is valid
-            if not clipped_box.is_valid():
-                continue
-            
-            x1, y1, x2, y2 = clipped_box
-            
-            # Crop the bubble
-            bubble_crop = img_array[y1:y2, x1:x2].copy()
-            
-            # Get bubble interior mask
-            bubble_mask, _ = get_bubble_text_mask(bubble_crop, threshold_value=threshold_value)
-            bubble_masks[bbox] = bubble_mask  # Use BoundingBox as key (it's hashable)
+        # Generate bubble masks for drawing
+        bubble_masks = _generate_bubble_masks(
+            input_image,
+            bubble_texts,
+            threshold_value,
+            silent
+        )
         
         results['bubble_masks'] = bubble_masks
         
-        # Fill bubble interiors with base color (only for bubbles with Japanese text)
-        cleaned_image = fill_bubble_interiors(
-            input_image_path, 
-            japanese_bboxes, 
-            threshold_value=threshold_value
+        # Create bubble interiors visualization using pre-generated masks
+        bubble_interiors_pil, output_paths = _create_bubble_interiors_visualization(
+            input_image,
+            bubble_texts,
+            bubble_masks,
+            save_bubble_interiors,
+            output_base,
+            output_filename,
+            output_subfolder,
+            silent
         )
         
-        # Convert BGR numpy array to RGB PIL Image
-        cleaned_image_rgb = cv2.cvtColor(cleaned_image, cv2.COLOR_BGR2RGB)
-        cleaned_image_pil = Image.fromarray(cleaned_image_rgb)
+        if bubble_interiors_pil is not None:
+            results['bubble_interiors_visualization'] = bubble_interiors_pil
+        results['output_paths'].update(output_paths)
+        
+        # Clean bubble interiors
+        cleaned_image_pil, output_paths = _clean_bubble_interiors(
+            input_image,
+            japanese_bboxes,
+            threshold_value,
+            save_cleaned,
+            output_base,
+            output_filename,
+            output_subfolder,
+            silent
+        )
+        
         results['cleaned_image'] = cleaned_image_pil
+        results['output_paths'].update(output_paths)
         
-        # Save cleaned image if requested, or create temporary file for draw_text_on_image
-        # (draw_text_on_image needs a file path)
-        if save_cleaned:
-            cleaned_path = _get_output_file_path(
-                output_base, "cleaned", f"{output_filename}_cleaned.png", output_subfolder
-            )
-            save_pil_image(cleaned_image_pil, str(cleaned_path), print_message=verbose)
-            results['output_paths']['cleaned'] = str(cleaned_path)
-            cleaned_image_path = cleaned_path
-        else:
-            # Create temporary cleaned image for draw_text_on_image
-            temp_cleaned_path = output_base / f"{output_filename}_temp_cleaned.png"
-            save_pil_image(cleaned_image_pil, str(temp_cleaned_path), print_message=False)
-            cleaned_image_path = temp_cleaned_path
-        
-        # Draw translated text on cleaned image
-        if verbose:
-            print("\n" + "=" * 50)
-            print("Drawing translated text on image...")
-            print("=" * 50)
-        
-        translated_image = draw_text_on_image(
-            str(cleaned_image_path),
-            bubble_texts,  # List of (bbox, translated_text) tuples
-            bubble_masks,  # Dictionary of bbox -> mask
-            font_path=font_path
+        # Draw translated text
+        translated_image, output_paths = _draw_translated_text(
+            cleaned_image_pil,
+            bubble_texts,
+            bubble_masks,
+            font_path,
+            save_translated,
+            output_base,
+            output_filename,
+            output_subfolder,
+            silent
         )
+        
         results['translated_image'] = translated_image
+        results['output_paths'].update(output_paths)
         
-        # Clean up temporary file if we created one
-        if not save_cleaned:
-            cleaned_image_path.unlink(missing_ok=True)
-        
-        # Save translated image if requested
-        if save_translated:
-            translated_path = _get_output_file_path(
-                output_base, "translated", f"{output_filename}_translated.png", output_subfolder
-            )
-            save_pil_image(translated_image, str(translated_path), print_message=verbose)
-            results['output_paths']['translated'] = str(translated_path)
-        
-        if verbose:
+        if not silent:
             print("\n" + "=" * 50)
             print("Processing complete!")
             print("=" * 50)
     
     except Exception as e:
-        if verbose:
+        if not silent:
             print(f"Error in manga translation: {e}")
         raise
     
@@ -451,7 +790,7 @@ def translate_manga_folder(
     save_cleaned: bool = False,
     save_translated: bool = True,
     # Processing options
-    verbose: bool = True,
+    silent: bool = False,
     continue_on_error: bool = True
 ) -> Dict[str, Any]:
     """
@@ -511,7 +850,7 @@ def translate_manga_folder(
     total_files = len(image_files)
     
     if total_files == 0:
-        if verbose:
+        if not silent:
             print(f"No image files found in {input_folder}")
         return {
             'processed_files': [],
@@ -522,22 +861,21 @@ def translate_manga_folder(
             'failed_count': 0
         }
     
-    if verbose:
+    if not silent:
         print("\n" + "=" * 50)
         print(f"Found {total_files} image file(s) to process")
         print("=" * 50)
     
     # Load detection model once for reuse across all pages
     detection_model = None
-    if verbose:
+    if not silent:
         print("\nLoading detection model (will be reused for all pages)...")
     try:
-        from src.bubble import load_model
-        detection_model = load_model()
+        detection_model = load_bubble_detection_model()
     except Exception as e:
         if not continue_on_error:
             raise
-        if verbose:
+        if not silent:
             print(f"Warning: Could not load detection model: {e}")
     
     # Process each image file
@@ -546,7 +884,7 @@ def translate_manga_folder(
     results_by_file = {}
     
     for i, image_file in enumerate(image_files, 1):
-        if verbose:
+        if not silent:
             print("\n" + "=" * 50)
             print(f"Processing file {i}/{total_files}: {image_file.name}")
             print("=" * 50)
@@ -574,7 +912,7 @@ def translate_manga_folder(
                 save_translated=save_translated,
                 output_filename=None,  # Use input filename
                 output_subfolder=folder_name,  # Organize outputs by folder name
-                verbose=verbose
+                silent=silent
             )
             
             processed_files.append(str(image_file))
@@ -584,14 +922,14 @@ def translate_manga_folder(
             error_msg = str(e)
             failed_files.append((str(image_file), error_msg))
             
-            if verbose:
+            if not silent:
                 print(f"\nError processing {image_file.name}: {error_msg}")
             
             if not continue_on_error:
                 raise
     
     # Print summary
-    if verbose:
+    if not silent:
         print("\n" + "=" * 50)
         print("Folder processing complete!")
         print("=" * 50)

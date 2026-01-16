@@ -2,6 +2,7 @@ from ultralytics import YOLO
 from huggingface_hub import hf_hub_download
 from PIL import Image
 import os
+import numpy as np
 from src.bbox import BoundingBox
 
 # Directory where downloaded model will be stored
@@ -12,7 +13,7 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 current_model = None
 current_model_name = None
 
-def load_model(model_path=None):
+def load_bubble_detection_model(model_path=None):
     """Load the YOLO model, downloading from Hugging Face if needed"""
     global current_model, current_model_name
     
@@ -36,23 +37,30 @@ def load_model(model_path=None):
     current_model_name = model_path
     return current_model
 
-def run_detection(model, image_path, conf_threshold=0.25, iou_threshold=0.45):
+def run_detection(model, image: Image.Image, conf_threshold=0.25, iou_threshold=0.45, silent=False):
     """
-    Run speech bubble detection on an image
+    Run speech bubble detection on an image and process the results.
     
     Args:
         model: Loaded YOLO model
-        image_path: Path to input image
+        image: Input PIL Image
         conf_threshold: Confidence threshold (0-1)
         iou_threshold: IoU threshold for NMS (0-1)
+        silent: If True, suppress progress messages
     
     Returns:
-        results: YOLO results object
+        Tuple of (annotated_bubble_image, boxes) where:
+        - annotated_bubble_image: PIL Image with annotations (or None if no detections)
+        - boxes: List of BoundingBox instances (or empty list if no detections)
     """
+    # Convert PIL Image to numpy array for YOLO
+    img_array = np.array(image.convert("RGB"))
+    
     # Run prediction (without saving to avoid creating predict/ directories)
-    print(f"Running inference on: {image_path}")
+    if not silent:
+        print("Running inference on image...")
     results = model.predict(
-        source=image_path,
+        source=img_array,
         conf=conf_threshold,
         iou=iou_threshold,
         show_labels=True,
@@ -60,24 +68,12 @@ def run_detection(model, image_path, conf_threshold=0.25, iou_threshold=0.45):
         imgsz=640,
         save=False,
     )
-    return results
-
-def process_detection_results(results):
-    """
-    Process YOLO detection results to extract annotated image and bounding boxes
     
-    Args:
-        results: YOLO results object
-    
-    Returns:
-        annotated_image: PIL Image with annotations (or None if no detections)
-        boxes: List of BoundingBox instances (or empty list if no detections)
-    """
-    # Get annotated image and boxes from results
+    # Process results to extract annotated image and bounding boxes
     for r in results:
         # r.plot() returns BGR numpy array, convert to RGB PIL Image
         im_array = r.plot()
-        annotated_image = Image.fromarray(im_array[..., ::-1])  # BGR to RGB
+        annotated_bubble_image = Image.fromarray(im_array[..., ::-1])  # BGR to RGB
         
         # Extract bounding boxes
         boxes = []
@@ -86,13 +82,15 @@ def process_detection_results(results):
             boxes.append(BoundingBox.from_list(bbox_list))
         
         # Print detection info
-        print(f"Found {len(boxes)} speech bubbles")
+        if not silent:
+            print(f"Found {len(boxes)} speech bubbles")
         for i, box in enumerate(r.boxes):
             conf = float(box.conf[0])
             cls = int(box.cls[0])
-            print(f"  Bubble {i+1}: confidence={conf:.3f}, class={cls}")
+            if not silent:
+                print(f"  Bubble {i+1}: confidence={conf:.3f}, class={cls}")
         
-        return annotated_image, boxes
+        return annotated_bubble_image, boxes
     
     return None, []
 
@@ -103,7 +101,7 @@ def get_detections(image_path, conf_threshold=0.25, iou_threshold=0.45):
     Returns:
         List of BoundingBox instances
     """
-    model = load_model()
+    model = load_bubble_detection_model()
     
     results = model.predict(
         source=image_path,

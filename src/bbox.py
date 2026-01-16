@@ -185,25 +185,6 @@ class BoundingBox:
 
 # Convenience functions for backward compatibility and list operations
 
-def normalize_boxes(boxes: List[Union[List[float], BoundingBox]]) -> List[BoundingBox]:
-    """
-    Normalize a list of bounding boxes to BoundingBox instances.
-    
-    Args:
-        boxes: List of bounding boxes (can be lists or BoundingBox instances)
-    
-    Returns:
-        List of BoundingBox instances
-    """
-    normalized = []
-    for box in boxes:
-        if isinstance(box, BoundingBox):
-            normalized.append(box)
-        else:
-            normalized.append(BoundingBox.from_list(box))
-    return normalized
-
-
 def clip_box(box: Union[List[float], BoundingBox], image_width: int, image_height: int) -> BoundingBox:
     """
     Clip a bounding box to image bounds.
@@ -323,11 +304,16 @@ def remove_parent_boxes(boxes: List[Union[List[float], BoundingBox]], threshold:
     if not boxes:
         return []
     
-    # Normalize to BoundingBox instances
-    normalized_boxes = normalize_boxes(boxes)
+    # Convert to BoundingBox instances
+    bbox_list = []
+    for box in boxes:
+        if isinstance(box, BoundingBox):
+            bbox_list.append(box)
+        else:
+            bbox_list.append(BoundingBox.from_list(box))
     
     # Create a copy to work with
-    remaining = normalized_boxes.copy()
+    remaining = bbox_list.copy()
     filtered = []
     
     while remaining:
@@ -364,11 +350,16 @@ def combine_overlapping_bubbles(boxes: List[Union[List[float], BoundingBox]], to
     if not boxes:
         return []
     
-    # Normalize to BoundingBox instances
-    normalized_boxes = normalize_boxes(boxes)
+    # Convert to BoundingBox instances
+    bbox_list = []
+    for box in boxes:
+        if isinstance(box, BoundingBox):
+            bbox_list.append(box)
+        else:
+            bbox_list.append(BoundingBox.from_list(box))
     
     # Create a copy to work with
-    remaining = normalized_boxes.copy()
+    remaining = bbox_list.copy()
     merged = []
     
     while remaining:

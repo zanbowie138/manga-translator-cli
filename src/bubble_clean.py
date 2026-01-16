@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 from PIL import Image
 from typing import List, Tuple, Union
-from src.bbox import BoundingBox, normalize_boxes
+from src.bbox import BoundingBox
 
 
 def get_bubble_text_mask(
@@ -104,6 +104,59 @@ def get_bubble_base_color_from_mask(
     return (int(center_color[0]), int(center_color[1]), int(center_color[2]))
 
 
+def visualize_single_bubble_mask(
+    bubble_image: Union[np.ndarray, Image.Image],
+    threshold_value: int = 200
+) -> np.ndarray:
+    """
+    Visualize a single bubble mask by filling interior with transparent blue and exterior with transparent green.
+    
+    Args:
+        bubble_image: Cropped bubble image as numpy array (BGR) or PIL Image
+        threshold_value: Threshold value for binary thresholding (default: 200)
+    
+    Returns:
+        BGRA numpy array with bubble interior in transparent blue and exterior in transparent green
+    """
+    # Convert to BGR numpy array if needed
+    if isinstance(bubble_image, Image.Image):
+        img_array = np.array(bubble_image.convert("RGB"))
+        img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+    elif isinstance(bubble_image, np.ndarray):
+        img_array = bubble_image.copy()
+        if len(img_array.shape) == 3 and img_array.shape[2] == 3:
+            pass  # Already BGR
+        elif len(img_array.shape) == 3 and img_array.shape[2] == 4:
+            img_array = cv2.cvtColor(img_array, cv2.COLOR_BGRA2BGR)
+    else:
+        raise TypeError(f"Unsupported image type: {type(bubble_image)}")
+    
+    # Convert to BGRA (add alpha channel)
+    output = cv2.cvtColor(img_array, cv2.COLOR_BGR2BGRA)
+    
+    # Define colors with transparency (BGR + Alpha)
+    # Blue for bubble interiors: (255, 0, 0, 128) in BGRA
+    # Green for exteriors: (0, 255, 0, 128) in BGRA
+    blue_color = np.array([255, 0, 0, 128], dtype=np.uint8)  # Transparent blue (BGR + Alpha)
+    green_color = np.array([0, 255, 0, 128], dtype=np.uint8)  # Transparent green (BGR + Alpha)
+    
+    # Get bubble outline and interior using whitespace detection
+    bubble_mask, _ = get_bubble_text_mask(img_array, threshold_value)
+    
+    # Create mask for area outside bubble but within bounding box
+    box_exterior_mask = 255 - bubble_mask
+    
+    # Fill bubble interior with transparent blue
+    bubble_indices = bubble_mask > 0
+    output[bubble_indices] = blue_color
+    
+    # Fill area outside bubble (but within bounding box) with transparent green
+    exterior_indices = box_exterior_mask > 0
+    output[exterior_indices] = green_color
+    
+    return output
+
+
 def visualize_bubble_masks(
     image: Union[str, np.ndarray, Image.Image],
     boxes: List[Union[List[float], Tuple[float, ...], BoundingBox]],
@@ -140,17 +193,13 @@ def visualize_bubble_masks(
     else:
         output = img_array.copy()
     
-    # Normalize to BoundingBox instances
-    normalized_boxes = normalize_boxes(boxes)
-    
-    # Define colors with transparency (BGR + Alpha)
-    # Blue for bubble interiors: (255, 0, 0, 128) in BGRA
-    # Green for exteriors within bounding box: (0, 255, 0, 128) in BGRA
-    blue_color = np.array([255, 0, 0, 128], dtype=np.uint8)  # Transparent blue (BGR + Alpha)
-    green_color = np.array([0, 255, 0, 128], dtype=np.uint8)  # Transparent green (BGR + Alpha)
-    
     # Process each bounding box individually
-    for bubble_box in normalized_boxes:
+    for box in boxes:
+        # Convert to BoundingBox if needed
+        if isinstance(box, BoundingBox):
+            bubble_box = box
+        else:
+            bubble_box = BoundingBox.from_list(box) if isinstance(box, list) else BoundingBox.from_tuple(box)
         # Clip to image bounds
         clipped_box = bubble_box.clip(img_array.shape[1], img_array.shape[0])
         
@@ -159,25 +208,14 @@ def visualize_bubble_masks(
         
         x1, y1, x2, y2 = clipped_box
         
-        # Crop the bubble region from the output image
-        bubble_region = output[y1:y2, x1:x2].copy()
+        # Crop the bubble region
+        bubble_crop = img_array[y1:y2, x1:x2].copy()
         
-        # Get bubble outline and interior using whitespace detection
-        bubble_mask, _ = get_bubble_text_mask(img_array[y1:y2, x1:x2], threshold_value)
+        # Visualize this single bubble
+        visualized_bubble = visualize_single_bubble_mask(bubble_crop, threshold_value)
         
-        # Create mask for area outside bubble but within bounding box
-        box_exterior_mask = 255 - bubble_mask
-        
-        # Fill bubble interior with transparent blue
-        bubble_indices = bubble_mask > 0
-        bubble_region[bubble_indices] = blue_color
-        
-        # Fill area outside bubble (but within bounding box) with transparent green
-        exterior_indices = box_exterior_mask > 0
-        bubble_region[exterior_indices] = green_color
-        
-        # Paste the modified region back into the output image
-        output[y1:y2, x1:x2] = bubble_region
+        # Paste the visualized bubble back into the output image
+        output[y1:y2, x1:x2] = visualized_bubble
     
     return output
 
@@ -213,11 +251,13 @@ def fill_bubble_interiors(
     
     output = img_array.copy()
     
-    # Normalize to BoundingBox instances
-    normalized_boxes = normalize_boxes(boxes)
-    
     # Process each bubble
-    for bubble_box in normalized_boxes:
+    for box in boxes:
+        # Convert to BoundingBox if needed
+        if isinstance(box, BoundingBox):
+            bubble_box = box
+        else:
+            bubble_box = BoundingBox.from_list(box) if isinstance(box, list) else BoundingBox.from_tuple(box)
         # Clip to image bounds
         clipped_box = bubble_box.clip(img_array.shape[1], img_array.shape[0])
         
