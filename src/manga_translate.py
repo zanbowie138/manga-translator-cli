@@ -19,7 +19,64 @@ from src.image_utils import get_cropped_images, save_pil_image
 from src.bbox import remove_parent_boxes, combine_overlapping_bubbles
 from src.translate import translate_phrase
 from src.draw_text import draw_text_on_image
-from src.bubble_clean import fill_bubble_interiors, color_bubble_interiors_blue, get_bubble_text_mask
+from src.bubble_clean import fill_bubble_interiors, visualize_bubble_masks, get_bubble_text_mask
+
+
+def _normalize_boxes(boxes: List[List[float]]) -> List[List[float]]:
+    """
+    Normalize bounding boxes to ensure correct ordering: x1 < x2 and y1 < y2.
+    
+    Args:
+        boxes: List of bounding boxes as [x1, y1, x2, y2]
+    
+    Returns:
+        List of normalized bounding boxes as [x1, y1, x2, y2] with x1 < x2 and y1 < y2
+    """
+    normalized = []
+    for box in boxes:
+        x1, y1, x2, y2 = box
+        # Ensure x1 < x2 and y1 < y2
+        x1, x2 = min(x1, x2), max(x1, x2)
+        y1, y2 = min(y1, y2), max(y1, y2)
+        normalized.append([x1, y1, x2, y2])
+    return normalized
+
+
+def _get_output_dir_path(output_base: Path, folder_name: str, output_subfolder: Optional[str] = None) -> Path:
+    """
+    Get the output directory path, optionally nested under a subfolder.
+    
+    Args:
+        output_base: Base output directory path
+        folder_name: Name of the output folder (e.g., "translated", "cleaned")
+        output_subfolder: Optional subfolder name to nest outputs under
+    
+    Returns:
+        Path to the output directory
+    """
+    if output_subfolder:
+        return output_base / folder_name / output_subfolder
+    else:
+        return output_base / folder_name
+
+
+def _get_output_file_path(output_base: Path, folder_name: str, filename: str, output_subfolder: Optional[str] = None) -> Path:
+    """
+    Get the output file path, optionally nested under a subfolder.
+    
+    Args:
+        output_base: Base output directory path
+        folder_name: Name of the output folder (e.g., "translated", "cleaned")
+        filename: Name of the output file
+        output_subfolder: Optional subfolder name to nest outputs under
+    
+    Returns:
+        Path to the output file
+    """
+    if output_subfolder:
+        return output_base / folder_name / output_subfolder / filename
+    else:
+        return output_base / folder_name / filename
 
 
 def translate_manga_page(
@@ -49,6 +106,7 @@ def translate_manga_page(
     save_translated: bool = True,
     # Filename customization
     output_filename: Optional[str] = None,  # If None, use input filename
+    output_subfolder: Optional[str] = None,  # Optional subfolder name (e.g., for folder processing)
     verbose: bool = True
 ) -> Dict[str, Any]:
     """
@@ -82,6 +140,7 @@ def translate_manga_page(
         save_cleaned: If True, save cleaned image (before text drawing)
         save_translated: If True, save final translated image
         output_filename: Custom output filename (None to derive from input)
+        output_subfolder: Optional subfolder name for organizing outputs (e.g., input folder name)
         verbose: If True, print progress messages
     
     Returns:
@@ -120,13 +179,13 @@ def translate_manga_page(
     
     # Create subfolders for each output type
     if save_speech_bubbles:
-        (output_base / "speech_bubbles").mkdir(parents=True, exist_ok=True)
+        _get_output_dir_path(output_base, "speech_bubbles", output_subfolder).mkdir(parents=True, exist_ok=True)
     if save_bubble_interiors:
-        (output_base / "bubble_interiors").mkdir(parents=True, exist_ok=True)
+        _get_output_dir_path(output_base, "bubble_interiors", output_subfolder).mkdir(parents=True, exist_ok=True)
     if save_cleaned:
-        (output_base / "cleaned").mkdir(parents=True, exist_ok=True)
+        _get_output_dir_path(output_base, "cleaned", output_subfolder).mkdir(parents=True, exist_ok=True)
     if save_translated:
-        (output_base / "translated").mkdir(parents=True, exist_ok=True)
+        _get_output_dir_path(output_base, "translated", output_subfolder).mkdir(parents=True, exist_ok=True)
     
     try:
         # Load detection model
@@ -151,6 +210,10 @@ def translate_manga_page(
         )
         
         annotated_img, boxes = process_detection_results(detection_results)
+        
+        # Normalize boxes to ensure correct ordering (x1 < x2, y1 < y2)
+        boxes = _normalize_boxes(boxes)
+        
         results['annotated_image'] = annotated_img
         results['boxes'] = boxes
         
@@ -159,7 +222,9 @@ def translate_manga_page(
         
         # Save annotated image if requested
         if save_speech_bubbles and annotated_img:
-            speech_bubbles_path = output_base / "speech_bubbles" / f"{output_filename}_speech_bubbles.png"
+            speech_bubbles_path = _get_output_file_path(
+                output_base, "speech_bubbles", f"{output_filename}_speech_bubbles.png", output_subfolder
+            )
             save_pil_image(annotated_img, str(speech_bubbles_path), print_message=verbose)
             results['output_paths']['speech_bubbles'] = str(speech_bubbles_path)
         
@@ -182,6 +247,9 @@ def translate_manga_page(
                 print("\nNo compound speech bubble processing applied...")
             filtered_bboxes = boxes
         
+        # Normalize filtered boxes to ensure correct ordering
+        filtered_bboxes = _normalize_boxes(filtered_bboxes)
+        
         results['filtered_boxes'] = filtered_bboxes
         if verbose:
             print(f"After processing: {len(filtered_bboxes)} speech bubbles")
@@ -192,17 +260,24 @@ def translate_manga_page(
                 print("\n" + "=" * 50)
                 print("Coloring bubble interiors blue...")
                 print("=" * 50)
-            blue_image = color_bubble_interiors_blue(
+            blue_image = visualize_bubble_masks(
                 input_image_path,
                 filtered_bboxes,
                 threshold_value=threshold_value
             )
-            # Convert BGR numpy array to RGB PIL Image
-            blue_image_rgb = cv2.cvtColor(blue_image, cv2.COLOR_BGR2RGB)
-            blue_image_pil = Image.fromarray(blue_image_rgb)
+            # Convert BGRA numpy array to RGBA PIL Image
+            if blue_image.shape[2] == 4:
+                blue_image_rgba = cv2.cvtColor(blue_image, cv2.COLOR_BGRA2RGBA)
+                blue_image_pil = Image.fromarray(blue_image_rgba)
+            else:
+                # Fallback for BGR (shouldn't happen with new implementation)
+                blue_image_rgb = cv2.cvtColor(blue_image, cv2.COLOR_BGR2RGB)
+                blue_image_pil = Image.fromarray(blue_image_rgb)
             results['blue_image'] = blue_image_pil
             
-            bubble_interiors_path = output_base / "bubble_interiors" / f"{output_filename}_bubble_interiors.png"
+            bubble_interiors_path = _get_output_file_path(
+                output_base, "bubble_interiors", f"{output_filename}_bubble_interiors.png", output_subfolder
+            )
             save_pil_image(blue_image_pil, str(bubble_interiors_path), print_message=verbose)
             results['output_paths']['bubble_interiors'] = str(bubble_interiors_path)
         
@@ -225,6 +300,7 @@ def translate_manga_page(
         for i, (cropped_img, bbox) in enumerate(cropped_images, 1):
             if verbose:
                 print(f"\n--- Speech Bubble {i} ---")
+                print(f"Bounding box: {bbox}")
             translated_text = ""
             translation_success = False
             try:
@@ -323,7 +399,9 @@ def translate_manga_page(
         # Save cleaned image if requested, or create temporary file for draw_text_on_image
         # (draw_text_on_image needs a file path)
         if save_cleaned:
-            cleaned_path = output_base / "cleaned" / f"{output_filename}_cleaned.png"
+            cleaned_path = _get_output_file_path(
+                output_base, "cleaned", f"{output_filename}_cleaned.png", output_subfolder
+            )
             save_pil_image(cleaned_image_pil, str(cleaned_path), print_message=verbose)
             results['output_paths']['cleaned'] = str(cleaned_path)
             cleaned_image_path = cleaned_path
@@ -353,7 +431,9 @@ def translate_manga_page(
         
         # Save translated image if requested
         if save_translated:
-            translated_path = output_base / "translated" / f"{output_filename}_translated.png"
+            translated_path = _get_output_file_path(
+                output_base, "translated", f"{output_filename}_translated.png", output_subfolder
+            )
             save_pil_image(translated_image, str(translated_path), print_message=verbose)
             results['output_paths']['translated'] = str(translated_path)
         
@@ -440,6 +520,9 @@ def translate_manga_folder(
     if not input_path.is_dir():
         raise ValueError(f"Input path is not a directory: {input_folder}")
     
+    # Extract folder name for organizing outputs
+    folder_name = input_path.name
+    
     # Find all image files
     image_files = [
         f for f in input_path.iterdir()
@@ -514,6 +597,7 @@ def translate_manga_folder(
                 save_cleaned=save_cleaned,
                 save_translated=save_translated,
                 output_filename=None,  # Use input filename
+                output_subfolder=folder_name,  # Organize outputs by folder name
                 verbose=verbose
             )
             

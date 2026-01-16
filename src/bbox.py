@@ -87,17 +87,23 @@ def box_contains(box1, box2, threshold=0.0):
     Args:
         box1: [x1, y1, x2, y2] - potential parent
         box2: [x1, y1, x2, y2] - potential child
-        threshold: Distance threshold for considering boxes
+        threshold: Distance threshold for growing box1 (box2 remains unchanged)
     
     Returns:
-        True if box1 contains box2
+        True if box1 (grown by threshold) contains box2
     """
     x1_1, y1_1, x2_1, y2_1 = box1
     x1_2, y1_2, x2_2, y2_2 = box2
     
-    # box1 contains box2 if box2 is completely inside box1
-    return (x1_2 >= x1_1 - threshold and y1_2 >= y1_1 - threshold and
-            x2_2 <= x2_1 + threshold and y2_2 <= y2_1 + threshold)
+    # Grow box1 by threshold on all sides, then check if box2 fits inside
+    grown_box1_x1 = x1_1 - threshold
+    grown_box1_y1 = y1_1 - threshold
+    grown_box1_x2 = x2_1 + threshold
+    grown_box1_y2 = y2_1 + threshold
+    
+    # Check if box2 is completely inside the grown box1
+    return (x1_2 >= grown_box1_x1 and y1_2 >= grown_box1_y1 and
+            x2_2 <= grown_box1_x2 and y2_2 <= grown_box1_y2)
 
 
 def remove_parent_boxes(boxes, threshold=0.0):

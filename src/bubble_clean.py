@@ -103,13 +103,14 @@ def get_bubble_base_color_from_mask(
     return (int(center_color[0]), int(center_color[1]), int(center_color[2]))
 
 
-def color_bubble_interiors_blue(
+def visualize_bubble_masks(
     image: Union[str, np.ndarray, Image.Image],
     boxes: List[Tuple[float, float, float, float]],
     threshold_value: int = 200
 ) -> np.ndarray:
     """
-    Color all speech bubble interiors blue for visualization.
+    Visualize speech bubble masks by filling interiors with transparent blue and exteriors (within bounding box) with transparent green.
+    For each bounding box, the area inside the bubble is blue and the area outside the bubble (but within the box) is green.
     
     Args:
         image: Input image as file path, numpy array (BGR), or PIL Image
@@ -117,7 +118,7 @@ def color_bubble_interiors_blue(
         threshold_value: Threshold value for binary thresholding (default: 200)
     
     Returns:
-        Image with bubble interiors colored blue as numpy array (BGR)
+        Image with bubble interiors filled with transparent blue and bounding box exteriors with transparent green as numpy array (BGRA)
     """
     # Load image
     if isinstance(image, str):
@@ -132,10 +133,19 @@ def color_bubble_interiors_blue(
     else:
         raise TypeError(f"Unsupported image type: {type(image)}")
     
-    output = img_array.copy()
-    blue_color = (255, 0, 0)  # BGR format: blue
+    # Convert to BGRA (add alpha channel)
+    if img_array.shape[2] == 3:
+        output = cv2.cvtColor(img_array, cv2.COLOR_BGR2BGRA)
+    else:
+        output = img_array.copy()
     
-    # Process each bubble
+    # Define colors with transparency (BGR + Alpha)
+    # Blue for bubble interiors: (255, 0, 0, 128) in BGRA
+    # Green for exteriors within bounding box: (0, 255, 0, 128) in BGRA
+    blue_color = np.array([255, 0, 0, 128], dtype=np.uint8)  # Transparent blue (BGR + Alpha)
+    green_color = np.array([0, 255, 0, 128], dtype=np.uint8)  # Transparent green (BGR + Alpha)
+    
+    # Process each bounding box individually
     for bubble_box in boxes:
         x1, y1, x2, y2 = [int(coord) for coord in bubble_box]
         
@@ -148,17 +158,25 @@ def color_bubble_interiors_blue(
         if x2 <= x1 or y2 <= y1:
             continue
         
-        # Crop the bubble
-        bubble_crop = output[y1:y2, x1:x2].copy()
+        # Crop the bubble region from the output image
+        bubble_region = output[y1:y2, x1:x2].copy()
         
         # Get bubble outline and interior using whitespace detection
-        bubble_mask, _ = get_bubble_text_mask(bubble_crop, threshold_value)
+        bubble_mask, _ = get_bubble_text_mask(img_array[y1:y2, x1:x2], threshold_value)
         
-        # Color bubble interior blue
-        bubble_crop[bubble_mask > 0] = blue_color
+        # Create mask for area outside bubble but within bounding box
+        box_exterior_mask = 255 - bubble_mask
         
-        # Paste the modified crop back into the output image
-        output[y1:y2, x1:x2] = bubble_crop
+        # Fill bubble interior with transparent blue
+        bubble_indices = bubble_mask > 0
+        bubble_region[bubble_indices] = blue_color
+        
+        # Fill area outside bubble (but within bounding box) with transparent green
+        exterior_indices = box_exterior_mask > 0
+        bubble_region[exterior_indices] = green_color
+        
+        # Paste the modified region back into the output image
+        output[y1:y2, x1:x2] = bubble_region
     
     return output
 
