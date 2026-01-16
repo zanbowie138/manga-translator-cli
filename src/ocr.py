@@ -97,3 +97,67 @@ def extract_text(image, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_new_tok
     
     return extracted_text
 
+
+def extract_text_batch(images, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_new_tokens=2048, silent=False):
+    """
+    Extract text from multiple images using PaddleOCR-VL (batch processing)
+    
+    Args:
+        images: List of PIL Image objects
+        model_id: Hugging Face model ID
+        max_new_tokens: Maximum tokens to generate
+        silent: If True, suppress progress messages
+    
+    Returns:
+        List of extracted text strings (one per image)
+    """
+    if not images:
+        return []
+    
+    processor, model = load_ocr_model(model_id)
+    
+    # Prepare batch inputs
+    texts = []
+    image_list = []
+    for image in images:
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image},
+                    {"type": "text", "text": "OCR:"},
+                ],
+            }
+        ]
+        text = processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        texts.append(text)
+        image_list.append(image)
+    
+    # Process batch
+    inputs = processor(text=texts, images=image_list, return_tensors="pt", padding=True)
+    inputs = {
+        k: (v.to(model.device) if isinstance(v, torch.Tensor) else v)
+        for k, v in inputs.items()
+    }
+    
+    # Run batch inference
+    if not silent:
+        print(f"Extracting text from {len(images)} image(s)...")
+    with torch.inference_mode():
+        generated_ids = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            use_cache=True,
+        )
+    
+    # Decode results
+    input_length = inputs["input_ids"].shape[1]
+    generated_tokens = generated_ids[:, input_length:]
+    extracted_texts = processor.batch_decode(
+        generated_tokens, skip_special_tokens=True
+    )
+    
+    return extracted_texts

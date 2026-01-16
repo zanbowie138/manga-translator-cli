@@ -278,25 +278,45 @@ def _extract_and_translate_text(
     """
     if not silent:
         print("\n" + "=" * 50)
-        print("Running OCR on all speech bubbles...")
+        print("Running OCR on all speech bubbles (batch processing)...")
         print("=" * 50)
     
-    # Step 1: Extract text from all bubbles
-    extracted_texts = []  # List of (bbox, extracted_text, index) tuples
+    # Step 1: Batch extract text from all bubbles
+    from src.ocr import extract_text_batch
+    
+    # Prepare images and track indices
+    images_to_process = []
+    bbox_indices = []  # List of (bbox, index) tuples corresponding to images
+    
     for i, (cropped_img, bbox) in enumerate(cropped_images, 1):
+        images_to_process.append(cropped_img)
+        bbox_indices.append((bbox, i))
         if not silent:
-            print(f"\n--- Speech Bubble {i} ---")
-            print(f"Bounding box: {bbox}")
-        try:
-            extracted_text = extract_text(cropped_img, model_id=ocr_model_id, max_new_tokens=ocr_max_new_tokens)
+            print(f"Preparing bubble {i} (bbox: {bbox})")
+    
+    # Batch extract all texts
+    extracted_texts = []  # List of (bbox, extracted_text, index) tuples
+    try:
+        extracted_text_list = extract_text_batch(
+            images_to_process,
+            model_id=ocr_model_id,
+            max_new_tokens=ocr_max_new_tokens,
+            silent=silent
+        )
+        
+        # Match extracted texts back to bubbles
+        for (bbox, index), extracted_text in zip(bbox_indices, extracted_text_list):
             if not silent:
                 sys.stdout.reconfigure(encoding='utf-8')
-                print(f"Original text: {extracted_text}")
-            extracted_texts.append((bbox, extracted_text, i))
-        except Exception as e:
-            if not silent:
-                print(f"Error extracting text from bubble {i}: {e}")
-            extracted_texts.append((bbox, "", i))
+                print(f"\nBubble {index} (bbox: {bbox}):")
+                print(f"  Extracted text: {extracted_text}")
+            extracted_texts.append((bbox, extracted_text, index))
+    except Exception as e:
+        if not silent:
+            print(f"Error in batch OCR extraction: {e}")
+        # Fallback to empty texts
+        for bbox, index in bbox_indices:
+            extracted_texts.append((bbox, "", index))
     
     # Step 2: Filter texts with CJK characters and prepare for batch translation
     from src.translate import is_cjk
