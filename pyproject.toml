@@ -1,7 +1,7 @@
 [project]
-name = "test"
+name = "manga-translator-cli"
 version = "0.1.0"
-description = "Add your description here"
+description = "A CLI tool for automatically translating manga pages from Japanese to English. Detects speech bubbles, extracts Japanese text using OCR, translates to English, and renders the translated text back onto images with proper alignment."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

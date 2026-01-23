@@ -7,6 +7,7 @@ Supports translating single images or entire folders of manga pages.
 
 import argparse
 import sys
+import time
 from pathlib import Path
 from src.manga_translate import translate_manga_page, translate_manga_folder, translate_manga_page_batch, translate_manga_folder_batch
 
@@ -94,8 +95,8 @@ Examples:
     parser.add_argument(
         '--font',
         type=str,
-        default=None,
-        help='Path to font file (default: system default)'
+        default='fonts/CC Astro City Int Regular.ttf',
+        help='Path to font file (default: fonts/CC Astro City Int Regular.ttf)'
     )
     
     # Translation parameters
@@ -185,6 +186,12 @@ Examples:
         help='Maximum number of pages to process in each batch (default: None = process all at once)'
     )
     
+    parser.add_argument(
+        '--benchmark',
+        action='store_true',
+        help='Measure and display processing time'
+    )
+    
     return parser.parse_args()
 
 
@@ -268,57 +275,103 @@ def main():
     }
     
     try:
+        # Start benchmark timer if enabled
+        start_time = time.time() if args.benchmark else None
+        
         supported_extensions = {'.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG', '.webp', '.WEBP'}
         total_processed = 0
         total_failed = 0
         all_results = []
         
-        # Collect individual files for batch processing
-        individual_files = []
+        # Collect all images for batch processing (if enabled)
+        all_batch_images = []
         
-        for input_str in args.input:
-            input_path = Path(input_str)
+        if args.batch:
+            # Collect all images from folders and individual files
+            for input_str in args.input:
+                input_path = Path(input_str)
+                
+                if input_path.is_dir():
+                    # Collect all images from this folder
+                    image_files = [
+                        str(f) for f in input_path.iterdir()
+                        if f.is_file() and f.suffix in supported_extensions
+                    ]
+                    image_files.sort(key=lambda x: Path(x).name)
+                    all_batch_images.extend(image_files)
+                    
+                    if not silent:
+                        print(f"Collected {len(image_files)} image(s) from folder: {input_str}")
+                
+                elif input_path.is_file() and input_path.suffix in supported_extensions:
+                    all_batch_images.append(input_str)
             
-            if input_path.is_dir():
-                # Process folder immediately
+            # Process all collected images together in batch mode
+            if all_batch_images:
                 if not silent:
                     print(f"\n{'='*50}")
-                    print(f"Processing folder: {input_str}")
+                    print(f"Batch processing {len(all_batch_images)} image(s) from all inputs...")
                     print(f"{'='*50}")
                 
-                if args.batch:
-                    # Batch processing mode
-                    results = translate_manga_folder_batch(
-                        input_folder=input_str,
+                try:
+                    results_dict = translate_manga_page_batch(
+                        input_image_paths=all_batch_images,
                         output_folder=args.output,
                         batch_amount=args.batch_amount,
                         **common_params
                     )
-                else:
-                    # Individual processing mode
+                    
+                    # Process results
+                    for input_str in all_batch_images:
+                        results = results_dict.get(input_str, {})
+                        if results.get('translated_image'):
+                            total_processed += 1
+                            all_results.append(('file', input_str, results))
+                        else:
+                            total_failed += 1
+                    
+                    if not silent:
+                        print(f"\nBatch processing complete: {total_processed} successful, {total_failed} failed")
+                except Exception as e:
+                    if not silent:
+                        print(f"Error in batch processing: {e}")
+                    if args.stop_on_error:
+                        raise
+                    total_failed = len(all_batch_images)
+            else:
+                if not silent:
+                    print("No images found to process")
+        else:
+            # Non-batch mode: process each input separately
+            for input_str in args.input:
+                input_path = Path(input_str)
+                
+                if input_path.is_dir():
+                    # Process folder
+                    if not silent:
+                        print(f"\n{'='*50}")
+                        print(f"Processing folder: {input_str}")
+                        print(f"{'='*50}")
+                    
                     results = translate_manga_folder(
                         input_folder=input_str,
                         output_folder=args.output,
                         continue_on_error=not args.stop_on_error,
                         **common_params
                     )
+                    
+                    total_processed += results['successful_count']
+                    total_failed += results['failed_count']
+                    all_results.append(('folder', input_str, results))
+                    
+                    if not silent:
+                        print(f"\nFolder '{input_str}' summary:")
+                        print(f"  Total files: {results['total_files']}")
+                        print(f"  Successfully processed: {results['successful_count']}")
+                        print(f"  Failed: {results['failed_count']}")
                 
-                total_processed += results['successful_count']
-                total_failed += results['failed_count']
-                all_results.append(('folder', input_str, results))
-                
-                if not silent:
-                    print(f"\nFolder '{input_str}' summary:")
-                    print(f"  Total files: {results['total_files']}")
-                    print(f"  Successfully processed: {results['successful_count']}")
-                    print(f"  Failed: {results['failed_count']}")
-            
-            elif input_path.is_file() and input_path.suffix in supported_extensions:
-                # Collect individual files for batch processing
-                if args.batch:
-                    individual_files.append(input_str)
-                else:
-                    # Process single file immediately (non-batch mode)
+                elif input_path.is_file() and input_path.suffix in supported_extensions:
+                    # Process single file
                     if not silent:
                         print(f"\n{'='*50}")
                         print(f"Processing file: {input_str}")
@@ -344,37 +397,6 @@ def main():
                         if not silent:
                             print(f"\nFile '{input_str}' failed to process")
         
-        # Process all collected individual files together in batch mode
-        if args.batch and individual_files:
-            if not silent:
-                print(f"\n{'='*50}")
-                print(f"Batch processing {len(individual_files)} file(s)...")
-                print(f"{'='*50}")
-            
-            results_dict = translate_manga_page_batch(
-                input_image_paths=individual_files,
-                output_folder=args.output,
-                batch_amount=args.batch_amount,
-                **common_params
-            )
-            
-            # Process results
-            for input_str in individual_files:
-                results = results_dict.get(input_str, {})
-                if results.get('translated_image'):
-                    total_processed += 1
-                    all_results.append(('file', input_str, results))
-                    
-                    if not silent:
-                        translated_path = results['output_paths'].get('translated')
-                        if translated_path:
-                            print(f"\nFile '{input_str}' processed successfully!")
-                            print(f"  Output: {translated_path}")
-                else:
-                    total_failed += 1
-                    if not silent:
-                        print(f"\nFile '{input_str}' failed to process")
-        
         # Print overall summary if multiple inputs
         if len(args.input) > 1 and not silent:
             print(f"\n{'='*50}")
@@ -383,6 +405,19 @@ def main():
             print(f"Total inputs: {len(args.input)}")
             print(f"Successfully processed: {total_processed}")
             print(f"Failed: {total_failed}")
+        
+        # Print benchmark results if enabled
+        if args.benchmark and start_time is not None:
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"\n{'='*50}")
+            print("Benchmark Results")
+            print(f"{'='*50}")
+            print(f"Total processing time: {elapsed_time:.2f} seconds")
+            if total_processed > 0:
+                avg_time_per_page = elapsed_time / total_processed
+                print(f"Average time per page: {avg_time_per_page:.2f} seconds")
+            print(f"{'='*50}")
     
     except KeyboardInterrupt:
         print("\n\nInterrupted by user", file=sys.stderr)
