@@ -33,8 +33,8 @@ packages = ["src"]
 index-strategy = "unsafe-best-match"
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu130" }
-torchvision = { index = "pytorch-cu130" }
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
 
 [[tool.uv.index]]
 name = "paddlepaddle-cpu"
@@ -45,5 +45,5 @@ name = "paddlepaddle-cu129"
 url = "https://www.paddlepaddle.org.cn/packages/stable/cu129/"
 
 [[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
