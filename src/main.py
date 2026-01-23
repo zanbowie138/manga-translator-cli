@@ -9,7 +9,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from src.manga_translate import translate_manga_page, translate_manga_folder, translate_manga_page_batch, translate_manga_folder_batch
+from .manga_translate import translate_manga_page, translate_manga_folder, translate_manga_page_batch, translate_manga_folder_batch
 
 
 def parse_args():
