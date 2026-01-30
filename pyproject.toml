@@ -35,6 +35,15 @@ packages = ["src"]
 index-strategy = "unsafe-best-match"
 
 [tool.uv.sources]
+# To switch between CPU and CUDA:
+# 1. Comment/uncomment the appropriate lines below
+# 2. Run: uv sync
+
+# CPU-only (comment out CUDA lines below if using CPU)
+#torch = { index = "pytorch-cpu" }
+#torchvision = { index = "pytorch-cpu" }
+
+# CUDA 12.8 (comment out CPU lines above if using CUDA) - CURRENTLY ACTIVE
 torch = { index = "pytorch-cu128" }
 torchvision = { index = "pytorch-cu128" }
 

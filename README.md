@@ -1,6 +1,25 @@
-# Manga Translation Tool
+# Manga Translation CLI
 
 Automated tool for translating manga pages from Japanese to English. Detects speech bubbles, extracts Japanese text, translates to English, and renders the translated text back onto the image.
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+  - [Requirements](#requirements)
+  - [Installing UV](#installing-uv)
+  - [Setup](#setup)
+  - [Models](#models)
+- [Usage](#usage)
+  - [Single Image Translation](#single-image-translation)
+  - [Folder Translation](#folder-translation)
+  - [Common Options](#common-options)
+  - [Available Options](#available-options)
+- [Output Structure](#output-structure)
+- [Dependencies](#dependencies)
+- [How It Works](#how-it-works)
+- [Switching Between CPU and CUDA](#switching-between-cpu-and-cuda)
+- [Notes](#notes)
 
 ## Features
 
@@ -16,75 +35,25 @@ Automated tool for translating manga pages from Japanese to English. Detects spe
 ### Requirements
 
 - Python 3.13 or higher
-- UV package manager (highly recommended) or pip
+- UV package manager
 
-### Installing UV
-
-If you don't have `uv` installed, you can install it using one of the following methods:
-
-**Using pip:**
-```bash
-pip install uv
-```
-
-**Using the official installer (recommended):**
-```bash
-# On macOS and Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# On Windows (PowerShell)
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-**Using Homebrew (macOS):**
-```bash
-brew install uv
-```
-
-**Using cargo:**
-```bash
-cargo install uv
-```
-
-For more installation options, visit: https://github.com/astral-sh/uv
+For uv installation, visit: https://github.com/astral-sh/uv
 
 ### Setup
 
-You can install this project in two ways:
-
-#### Option 1: Install as a tool (recommended)
-
-This installs the `manga-translate` command globally:
-
-**For CPU-only:**
-```bash
-uv tool install . --from 'torch' 
-```
-
-**For CUDA support (GPU acceleration):**
-```bash
-uv tool install --from '. [cu130]' .
-```
-
-#### Option 2: Development installation
-
-For development or if you want to run from the source directory:
-
 1. Clone or download this repository
 
-2. Install dependencies using UV:
+2. **Select CPU or CUDA backend** (edit `pyproject.toml`):
+   - Open `pyproject.toml`
+   - Find `[tool.uv.sources]` section (line ~37)
+   - Comment out CPU lines and uncomment CUDA lines for GPU
+   - Comment out CUDA lines and uncomment CPU lines for CPU-only
+   - Default: CUDA 12.8
 
-   **For CPU-only:**
+3. **Install dependencies:**
    ```bash
-   uv sync --extra cpu
+   uv sync
    ```
-
-   **For CUDA support (GPU acceleration):**
-   ```bash
-   uv sync --extra cu130
-   ```
-
-   Note: CPU versions of PyTorch are installed by default. Use the `--extra cu130` flag to install CUDA 13.0 versions for GPU acceleration.
 
 ### Models
 
@@ -184,11 +153,18 @@ When processing files, outputs are organized in subdirectories:
 7. Renders translated text within bubble shapes using binary search for optimal font size
 8. Saves the final translated image
 
+## Switching Between CPU and CUDA
+
+After installation, to change PyTorch backend:
+1. Edit `pyproject.toml` `[tool.uv.sources]` section (comment/uncomment lines)
+2. Run `uv sync`
+3. Use `--device cuda` when running to use GPU
+
 ## Notes
 
-- First run will download models, which may take several minutes
+- First run downloads models (several minutes)
 - Translation quality depends on text clarity and font style
-- GPU support available for faster processing (install with `uv sync --extra cu130` and use `--device cuda`)
-- The `--device` argument controls both OCR and translation device usage
-- Supported image formats: PNG, JPG, JPEG, WEBP
+- GPU requires CUDA 12.8-compatible NVIDIA GPU + drivers
+- `--device` controls both OCR and translation device
+- Supported formats: PNG, JPG, JPEG, WEBP
 
