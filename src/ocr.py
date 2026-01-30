@@ -1,6 +1,7 @@
 import torch
 from PIL import Image
 from transformers import AutoModelForCausalLM, AutoProcessor
+from tqdm import tqdm
 
 # Cache for models
 _processor = None
@@ -27,9 +28,7 @@ def load_ocr_model(model_id="jzhang533/PaddleOCR-VL-For-Manga", device=None):
     # Return cached models if same model and device
     if _model is not None and _model_id == model_id and _device == device:
         return _processor, _model
-    
-    print(f"Loading model: {model_id} on {device}...")
-    
+
     _processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True, use_fast=True)
     
     _model = AutoModelForCausalLM.from_pretrained(
@@ -100,37 +99,32 @@ def extract_text(image, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_new_tok
 def extract_text_batch(images, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_new_tokens=2048, silent=False):
     """
     Extract text from multiple images using PaddleOCR-VL (sequential processing for debugging)
-    
+
     Processes each image individually by calling extract_text on each one sequentially.
     This is useful for debugging batch processing issues.
-    
+
     Args:
         images: List of PIL Image objects
         model_id: Hugging Face model ID
         max_new_tokens: Maximum tokens to generate
         silent: If True, suppress progress messages
-    
+
     Returns:
         List of extracted text strings (one per image)
     """
     if not images:
         return []
-    
-    if not silent:
-        print(f"Extracting text from {len(images)} image(s) sequentially...")
-    
+
     extracted_texts = []
-    for i, image in enumerate(images, 1):
+    iterator = tqdm(images, desc="Extracting text", disable=silent, unit="bubble")
+
+    for image in iterator:
         try:
-            if not silent:
-                print(f"Processing image {i}/{len(images)}...")
             extracted_text = extract_text(image, model_id=model_id, max_new_tokens=max_new_tokens)
             extracted_texts.append(extracted_text)
         except Exception as e:
-            if not silent:
-                print(f"Error extracting text from image {i}: {e}")
             extracted_texts.append("")
-    
+
     return extracted_texts
 
 

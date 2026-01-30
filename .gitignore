@@ -13,3 +13,6 @@ inputs/
 output/
 sugoi-v4-ja-en-ctranslate2/
 cached_models
+
+CLAUDE.md
+.claude
