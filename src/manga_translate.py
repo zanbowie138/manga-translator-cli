@@ -19,6 +19,9 @@ from src.image_utils import get_cropped_images, save_pil_image
 from src.bbox import BoundingBox, remove_parent_boxes, combine_overlapping_bubbles
 from src.draw_text import draw_text_on_image
 from src.bubble_clean import fill_bubble_interiors, get_bubble_text_mask
+from src.config import Config
+from src.console import Console
+from src.output_manager import OutputManager
 
 
 def _setup_output_structure(
@@ -518,36 +521,15 @@ def _get_output_file_path(output_base: Path, folder_name: str, filename: str, ou
 def translate_manga_page(
     input_image_path: str,
     output_folder: str,
-    # Detection parameters
+    config: Config,
+    console: Console,
     detection_model=None,  # Optional: pass pre-loaded model or None to load
-    conf_threshold: float = 0.25,
-    iou_threshold: float = 0.45,
-    parent_box_threshold: int = 10,
-    bbox_processing: str = 'remove-parent',
-    # Bubble processing parameters
-    threshold_value: int = 200,
-    # Text parameters
-    font_path: Optional[str] = None,
-    # Translation parameters
-    translation_model_path: Optional[str] = None,
-    translation_device: str = 'cpu',
-    translation_beam_size: int = 5,
-    # OCR parameters
-    ocr_model_id: str = "jzhang533/PaddleOCR-VL-For-Manga",
-    ocr_max_new_tokens: int = 2048,
-    # Output toggles
-    save_speech_bubbles: bool = False,
-    save_bubble_interiors: bool = False,
-    save_cleaned: bool = False,
-    save_translated: bool = True,
-    # Filename customization
     output_filename: Optional[str] = None,  # If None, use input filename
-    output_subfolder: Optional[str] = None,  # Optional subfolder name (e.g., for folder processing)
-    silent: bool = False
+    output_subfolder: Optional[str] = None  # Optional subfolder name (e.g., for folder processing)
 ) -> Dict[str, Any]:
     """
     Comprehensive function to translate a manga page from Japanese to English.
-    
+
     This function performs the complete pipeline:
     1. Detects speech bubbles using YOLO
     2. Filters parent boxes
@@ -555,30 +537,16 @@ def translate_manga_page(
     4. Translates Japanese text to English
     5. Cleans bubble interiors
     6. Draws translated text on the image
-    
+
     Args:
         input_image_path: Path to input manga page image
         output_folder: Base folder path for all outputs
+        config: Configuration object containing pipeline parameters
+        console: Console object for output messages
         detection_model: Pre-loaded YOLO model (None to load automatically)
-        conf_threshold: Confidence threshold for bubble detection (0-1)
-        iou_threshold: IoU threshold for NMS (0-1)
-        parent_box_threshold: Threshold for processing compound speech bubbles
-        bbox_processing: Compound speech bubble processing mode ('remove-parent', 'combine-children', or 'none')
-        threshold_value: Threshold for bubble mask detection
-        font_path: Path to font file (None to use system default)
-        translation_model_path: Path to translation model (None for default)
-        translation_device: Device for translation ('cpu' or 'cuda')
-        translation_beam_size: Beam size for translation
-        ocr_model_id: Hugging Face model ID for OCR
-        ocr_max_new_tokens: Maximum tokens for OCR generation
-        save_speech_bubbles: If True, save annotated detection image
-        save_bubble_interiors: If True, save blue bubble interior visualization
-        save_cleaned: If True, save cleaned image (before text drawing)
-        save_translated: If True, save final translated image
         output_filename: Custom output filename (None to derive from input)
         output_subfolder: Optional subfolder name for organizing outputs (e.g., input folder name)
-        verbose: If True, print progress messages
-    
+
     Returns:
         Dictionary containing:
         - 'annotated_bubble_image': PIL Image with detected bubbles (or None)
@@ -605,191 +573,169 @@ def translate_manga_page(
         'bubble_interiors_visualization': None,  # PIL Image visualization
         'output_paths': {}
     }
-    
+
     # Determine output filename
     if output_filename is None:
         input_path = Path(input_image_path)
         output_filename = input_path.stem
-    
+
     # Set up output folder structure
-    output_base = _setup_output_structure(
-        output_folder,
-        output_subfolder,
-        save_speech_bubbles,
-        save_bubble_interiors,
-        save_cleaned,
-        save_translated
+    output_manager = OutputManager(output_folder, output_subfolder)
+    output_manager.setup(
+        save_speech_bubbles=config.save_speech_bubbles,
+        save_bubble_interiors=config.save_bubble_interiors,
+        save_cleaned=config.save_cleaned,
+        save_translated=config.save_translated
     )
-    
+    output_base = output_manager.base
+
     try:
         # Load the input image
         input_image = Image.open(input_image_path).convert("RGB")
-        
+
         # Load detection model
         if detection_model is None:
-            if not silent:
-                print("Loading detection model...")
+            console.info("Loading detection model...")
             detection_model = load_bubble_detection_model()
-        
+
         # Detect speech bubbles
         annotated_bubble_img, boxes, output_paths = _detect_speech_bubbles(
             input_image,
-            detection_model, 
-            conf_threshold,
-            iou_threshold,
-            save_speech_bubbles,
+            detection_model,
+            config.conf_threshold,
+            config.iou_threshold,
+            config.save_speech_bubbles,
             output_base,
             output_filename,
             output_subfolder,
-            silent
+            console.quiet
         )
-        
+
         results['annotated_bubble_image'] = annotated_bubble_img
         results['boxes'] = boxes
         results['output_paths'].update(output_paths)
-        
+
         # Process bounding boxes based on mode
         filtered_bboxes = _process_bounding_boxes(
             boxes,
-            bbox_processing,
-            parent_box_threshold,
-            silent
+            config.bbox_processing,
+            config.parent_box_threshold,
+            console.quiet
         )
-        
+
         results['filtered_boxes'] = filtered_bboxes
-        
+
         if not filtered_bboxes:
+            if config.save_translated:
+                translated_path = _get_output_file_path(
+                    output_base, "translated", f"{output_filename}_translated.png", output_subfolder
+                )
+                save_pil_image(input_image, str(translated_path), print_message=not console.quiet)
+                results['output_paths']['translated'] = str(translated_path)
+                results['translated_image'] = input_image
             return results
-        
+
         # Crop individual speech bubbles
-        if not silent:
-            print("\nCropping speech bubbles...")
+        console.info("Cropping speech bubbles...")
         cropped_images = get_cropped_images(input_image, filtered_bboxes)
-        if not silent:
-            print(f"Cropped {len(cropped_images)} speech bubble images")
-        
+        console.info(f"Cropped {len(cropped_images)} speech bubble images")
+
         # Extract and translate text
         bubble_texts, japanese_bboxes = _extract_and_translate_text(
             cropped_images,
-            ocr_model_id,
-            ocr_max_new_tokens,
-            translation_model_path,
-            translation_device,
-            translation_beam_size,
-            silent
+            config.ocr_model_id,
+            config.ocr_max_new_tokens,
+            config.translation_model_path,
+            config.translation_device,
+            config.translation_beam_size,
+            console.quiet
         )
-        
+
         results['bubble_texts'] = bubble_texts
-        
+
         # Check if we have any Japanese text to translate
         if not bubble_texts:
-            if not silent:
-                print("\nNo Japanese text found in any bubbles.")
+            console.info("No Japanese text found in any bubbles.")
             return results
-        
+
         # Generate bubble masks for drawing
         bubble_masks = _generate_bubble_masks(
             input_image,
             bubble_texts,
-            threshold_value,
-            silent
+            config.threshold_value,
+            console.quiet
         )
-        
+
         results['bubble_masks'] = bubble_masks
-        
+
         # Create bubble interiors visualization using pre-generated masks
         bubble_interiors_pil, output_paths = _create_bubble_interiors_visualization(
             input_image,
             bubble_texts,
             bubble_masks,
-            save_bubble_interiors,
+            config.save_bubble_interiors,
             output_base,
             output_filename,
             output_subfolder,
-            silent
+            console.quiet
         )
-        
+
         if bubble_interiors_pil is not None:
             results['bubble_interiors_visualization'] = bubble_interiors_pil
         results['output_paths'].update(output_paths)
-        
+
         # Clean bubble interiors
         cleaned_image_pil, output_paths = _clean_bubble_interiors(
             input_image,
-            japanese_bboxes, 
-            threshold_value,
-            save_cleaned,
+            japanese_bboxes,
+            config.threshold_value,
+            config.save_cleaned,
             output_base,
             output_filename,
             output_subfolder,
-            silent
+            console.quiet
         )
-        
+
         results['cleaned_image'] = cleaned_image_pil
         results['output_paths'].update(output_paths)
-        
+
         # Draw translated text
         translated_image, output_paths = _draw_translated_text(
             cleaned_image_pil,
             bubble_texts,
             bubble_masks,
-            font_path,
-            save_translated,
+            config.font_path,
+            config.save_translated,
             output_base,
             output_filename,
             output_subfolder,
-            silent
+            console.quiet
         )
-        
+
         results['translated_image'] = translated_image
         results['output_paths'].update(output_paths)
-        
-        if not silent:
-            print("\n" + "=" * 50)
-            print("Processing complete!")
-            print("=" * 50)
-        
+
+        console.section("Processing complete!")
+
     except Exception as e:
-        if not silent:
-            print(f"Error in manga translation: {e}")
+        console.error(f"Error in manga translation: {e}")
         raise
-    
+
     return results
 
 
 def translate_manga_page_batch(
     input_image_paths: List[str],
     output_folder: str,
-    # Detection parameters
+    config: Config,
+    console: Console,
     detection_model=None,  # Optional: pass pre-loaded model or None to load
-    conf_threshold: float = 0.25,
-    iou_threshold: float = 0.45,
-    parent_box_threshold: int = 10,
-    bbox_processing: str = 'remove-parent',
-    # Bubble processing parameters
-    threshold_value: int = 200,
-    # Text parameters
-    font_path: Optional[str] = None,
-    # Translation parameters
-    translation_model_path: Optional[str] = None,
-    translation_device: str = 'cpu',
-    translation_beam_size: int = 5,
-    # OCR parameters
-    ocr_model_id: str = "jzhang533/PaddleOCR-VL-For-Manga",
-    ocr_max_new_tokens: int = 2048,
-    # Output toggles
-    save_speech_bubbles: bool = False,
-    save_bubble_interiors: bool = False,
-    save_cleaned: bool = False,
-    save_translated: bool = True,
-    # Filename customization
     output_subfolder: Optional[str] = None,  # Optional subfolder name (e.g., for folder processing)
-    batch_amount: Optional[int] = None,  # Process in chunks if specified
-    silent: bool = False
+    batch_amount: Optional[int] = None  # Process in chunks if specified
 ) -> Dict[str, Dict[str, Any]]:
     """
     Batch process multiple manga pages through each pipeline step together.
-    
+
     This function processes all pages simultaneously through each step:
     1. Loads all images
     2. Detects bubbles for all images
@@ -799,91 +745,57 @@ def translate_manga_page_batch(
     6. Generates masks for all bubbles
     7. Cleans all images
     8. Draws text on all images
-    
+
     Args:
         input_image_paths: List of paths to input manga page images
         output_folder: Base folder path for all outputs
+        config: Configuration object containing pipeline parameters
+        console: Console object for output messages
         detection_model: Pre-loaded YOLO model (None to load automatically)
-        conf_threshold: Confidence threshold for bubble detection (0-1)
-        iou_threshold: IoU threshold for NMS (0-1)
-        parent_box_threshold: Threshold for processing compound speech bubbles
-        bbox_processing: Compound speech bubble processing mode ('remove-parent', 'combine-children', or 'none')
-        threshold_value: Threshold for bubble mask detection
-        font_path: Path to font file (None to use system default)
-        translation_model_path: Path to translation model (None for default)
-        translation_device: Device for translation ('cpu' or 'cuda')
-        translation_beam_size: Beam size for translation
-        ocr_model_id: Hugging Face model ID for OCR
-        ocr_max_new_tokens: Maximum tokens for OCR generation
-        save_speech_bubbles: If True, save annotated detection images
-        save_bubble_interiors: If True, save blue bubble interior visualizations
-        save_cleaned: If True, save cleaned images (before text drawing)
-        save_translated: If True, save final translated images
         output_subfolder: Optional subfolder name for organizing outputs (e.g., input folder name)
         batch_amount: Maximum number of pages to process in each batch (None = process all at once)
-        silent: If True, suppress progress messages
-    
+
     Returns:
         Dictionary mapping each input path to its result dictionary (same format as translate_manga_page)
     """
     if not input_image_paths:
         return {}
-    
+
     # Handle batch_amount chunking
     if batch_amount is not None and batch_amount > 0:
         all_results = {}
         for i in range(0, len(input_image_paths), batch_amount):
             chunk = input_image_paths[i:i + batch_amount]
-            if not silent:
-                print(f"\n{'='*50}")
-                print(f"Processing batch {i//batch_amount + 1} ({len(chunk)} pages)...")
-                print(f"{'='*50}")
+            console.section(f"Processing batch {i//batch_amount + 1} ({len(chunk)} pages)...")
             chunk_results = translate_manga_page_batch(
                 chunk,
                 output_folder,
+                config=config,
+                console=console,
                 detection_model=detection_model,
-                conf_threshold=conf_threshold,
-                iou_threshold=iou_threshold,
-                parent_box_threshold=parent_box_threshold,
-                bbox_processing=bbox_processing,
-                threshold_value=threshold_value,
-                font_path=font_path,
-                translation_model_path=translation_model_path,
-                translation_device=translation_device,
-                translation_beam_size=translation_beam_size,
-                ocr_model_id=ocr_model_id,
-                ocr_max_new_tokens=ocr_max_new_tokens,
-                save_speech_bubbles=save_speech_bubbles,
-                save_bubble_interiors=save_bubble_interiors,
-                save_cleaned=save_cleaned,
-                save_translated=save_translated,
                 output_subfolder=output_subfolder,
-                batch_amount=None,  # Don't recurse
-                silent=silent
+                batch_amount=None  # Don't recurse
             )
             all_results.update(chunk_results)
         return all_results
-    
+
     # Initialize results dictionary
     results_by_path: Dict[str, Dict[str, Any]] = {}
-    
+
     # Set up output folder structure
-    output_base = _setup_output_structure(
-        output_folder,
-        output_subfolder,
-        save_speech_bubbles,
-        save_bubble_interiors,
-        save_cleaned,
-        save_translated
+    output_manager = OutputManager(output_folder, output_subfolder)
+    output_manager.setup(
+        save_speech_bubbles=config.save_speech_bubbles,
+        save_bubble_interiors=config.save_bubble_interiors,
+        save_cleaned=config.save_cleaned,
+        save_translated=config.save_translated
     )
+    output_base = output_manager.base
     
     try:
         # Step 1: Load all images
-        if not silent:
-            print(f"\n{'='*50}")
-            print(f"Loading {len(input_image_paths)} image(s)...")
-            print(f"{'='*50}")
-        
+        console.section(f"Loading {len(input_image_paths)} image(s)...")
+
         input_images = []
         output_filenames = []
         for input_path_str in input_image_paths:
@@ -891,7 +803,7 @@ def translate_manga_page_batch(
             input_image = Image.open(input_path_str).convert("RGB")
             input_images.append(input_image)
             output_filenames.append(input_path.stem)
-            
+
             # Initialize result dictionary for this page
             results_by_path[input_path_str] = {
                 'annotated_bubble_image': None,
@@ -905,179 +817,167 @@ def translate_manga_page_batch(
                 'bubble_interiors_visualization': None,
                 'output_paths': {}
             }
-        
+
         # Step 2: Load detection model
         if detection_model is None:
-            if not silent:
-                print("\nLoading detection model...")
+            console.info("Loading detection model...")
             detection_model = load_bubble_detection_model()
-        
+
         # Step 3: Detect bubbles for all images
-        if not silent:
-            print(f"\n{'='*50}")
-            print(f"Detecting speech bubbles for {len(input_images)} image(s)...")
-            print(f"{'='*50}")
-        
+        console.section(f"Detecting speech bubbles for {len(input_images)} image(s)...")
+
         all_annotated_images = []
         all_boxes = []
         all_output_paths = []
-        
+
         for page_idx, (input_image, input_path_str, output_filename) in enumerate(zip(input_images, input_image_paths, output_filenames), 1):
-            if not silent:
-                print(f"\nPage {page_idx}/{len(input_images)}: {Path(input_path_str).name}")
-            
+            console.info(f"Page {page_idx}/{len(input_images)}: {Path(input_path_str).name}")
+
             annotated_bubble_img, boxes, output_paths = _detect_speech_bubbles(
                 input_image,
                 detection_model,
-                conf_threshold,
-                iou_threshold,
-                save_speech_bubbles,
+                config.conf_threshold,
+                config.iou_threshold,
+                config.save_speech_bubbles,
                 output_base,
                 output_filename,
                 output_subfolder,
-                silent
+                console.quiet
             )
-            
+
             all_annotated_images.append(annotated_bubble_img)
             all_boxes.append(boxes)
             all_output_paths.append(output_paths)
-            
+
             results_by_path[input_path_str]['annotated_bubble_image'] = annotated_bubble_img
             results_by_path[input_path_str]['boxes'] = boxes
             results_by_path[input_path_str]['output_paths'].update(output_paths)
-        
+
         # Step 4: Process bounding boxes for all images
-        if not silent:
-            print(f"\n{'='*50}")
-            print("Processing bounding boxes for all images...")
-            print(f"{'='*50}")
-        
+        console.section("Processing bounding boxes for all images...")
+
         all_filtered_bboxes = []
         for page_idx, (boxes, input_path_str) in enumerate(zip(all_boxes, input_image_paths), 1):
             filtered_bboxes = _process_bounding_boxes(
                 boxes,
-                bbox_processing,
-                parent_box_threshold,
-                silent
+                config.bbox_processing,
+                config.parent_box_threshold,
+                console.quiet
             )
             all_filtered_bboxes.append(filtered_bboxes)
             results_by_path[input_path_str]['filtered_boxes'] = filtered_bboxes
-        
+
         # Step 5: Crop all bubbles from all images and track page indices
-        if not silent:
-            print(f"\n{'='*50}")
-            print("Cropping speech bubbles from all images...")
-            print(f"{'='*50}")
-        
+        console.section("Cropping speech bubbles from all images...")
+
         all_cropped_images = []  # List of (page_idx, cropped_img, bbox) tuples
         page_bubble_indices = []  # List of (start_idx, end_idx) for each page
-        
+
         for page_idx, (input_image, filtered_bboxes) in enumerate(zip(input_images, all_filtered_bboxes)):
             if not filtered_bboxes:
                 page_bubble_indices.append((len(all_cropped_images), len(all_cropped_images)))
                 continue
-            
+
             start_idx = len(all_cropped_images)
             cropped_images = get_cropped_images(input_image, filtered_bboxes)
             for cropped_img, bbox in cropped_images:
                 all_cropped_images.append((page_idx, cropped_img, bbox))
             end_idx = len(all_cropped_images)
             page_bubble_indices.append((start_idx, end_idx))
-            
-            if not silent:
-                print(f"Page {page_idx + 1}: Cropped {len(cropped_images)} speech bubbles")
-        
+
+            console.info(f"Page {page_idx + 1}: Cropped {len(cropped_images)} speech bubbles")
+
         if not all_cropped_images:
-            if not silent:
-                print("\nNo speech bubbles found in any images.")
+            console.info("No speech bubbles found in any images.")
+            if config.save_translated:
+                for input_image, input_path_str, output_filename in zip(
+                    input_images, input_image_paths, output_filenames
+                ):
+                    translated_path = _get_output_file_path(
+                        output_base, "translated", f"{output_filename}_translated.png", output_subfolder
+                    )
+                    save_pil_image(input_image, str(translated_path), print_message=not console.quiet)
+                    results_by_path[input_path_str]['output_paths']['translated'] = str(translated_path)
+                    results_by_path[input_path_str]['translated_image'] = input_image
             return results_by_path
-        
+
         # Step 6: Batch OCR all bubbles across all images
-        if not silent:
-            print(f"\n{'='*50}")
-            print(f"Running OCR on {len(all_cropped_images)} speech bubbles (batch processing)...")
-            print(f"{'='*50}")
-        
+        console.section(f"Running OCR on {len(all_cropped_images)} speech bubbles (batch processing)...")
+
         from src.ocr import extract_text_batch
-        
+
         # Prepare images for batch OCR
         ocr_images = [cropped_img for _, cropped_img, _ in all_cropped_images]
         ocr_results = extract_text_batch(
             ocr_images,
-            model_id=ocr_model_id,
-            max_new_tokens=ocr_max_new_tokens,
-            silent=silent
+            model_id=config.ocr_model_id,
+            max_new_tokens=config.ocr_max_new_tokens,
+            silent=console.quiet
         )
-        
+
         # Step 7: Extract texts for batch translation
         all_extracted_texts = []  # List of (page_idx, bbox, extracted_text, bubble_index) tuples
         bubble_counter = {}  # Track bubble index per page
-        
+
         for (page_idx, _, bbox), extracted_text in zip(all_cropped_images, ocr_results):
             # Track bubble index per page (starting from 1)
             if page_idx not in bubble_counter:
                 bubble_counter[page_idx] = 0
             bubble_counter[page_idx] += 1
             bubble_index = bubble_counter[page_idx]
-            
+
             all_extracted_texts.append((page_idx, bbox, extracted_text, bubble_index))
-            if not silent:
+            if not console.quiet:
                 sys.stdout.reconfigure(encoding='utf-8')
-                print(f"\nPage {page_idx + 1}, Bubble {bubble_index} (bbox: {bbox}):")
-                print(f"  Extracted text: {extracted_text}")
-        
+                console.print(f"\nPage {page_idx + 1}, Bubble {bubble_index} (bbox: {bbox}):")
+                console.print(f"  Extracted text: {extracted_text}")
+
         # Extract texts for translation
         texts_list = [extracted_text for _, _, extracted_text, _ in all_extracted_texts]
-        
+
         # Translate all texts individually
         from src.translate import translate_batch
-        
-        if not silent:
-            print("\n" + "=" * 50)
-            print("Translating texts...")
-            print("=" * 50)
-        
+
+        console.section("Translating texts...")
+
         translated_texts_list = translate_batch(
             texts_list,
-            model_path=translation_model_path,
-            device=translation_device,
-            beam_size=translation_beam_size,
-            silent=silent
+            model_path=config.translation_model_path,
+            device=config.translation_device,
+            beam_size=config.translation_beam_size,
+            silent=console.quiet
         )
-        
+
         # Map translations back to pages and bubbles
         all_bubble_texts = [[] for _ in input_images]  # List of lists: one per page
         all_japanese_bboxes = [[] for _ in input_images]  # List of lists: one per page
-        
+
         for (page_idx, bbox, extracted_text, bubble_index), translated_text in zip(all_extracted_texts, translated_texts_list):
             if translated_text.strip():
                 all_bubble_texts[page_idx].append((bbox, translated_text))
                 all_japanese_bboxes[page_idx].append(bbox)
-                if not silent:
-                    print(f"\nPage {page_idx + 1}, Bubble {bubble_index}:")
-                    print(f"  Original: {extracted_text}")
-                    print(f"  Translated: {translated_text}")
-        
+                if not console.quiet:
+                    console.print(f"\nPage {page_idx + 1}, Bubble {bubble_index}:")
+                    console.print(f"  Original: {extracted_text}")
+                    console.print(f"  Translated: {translated_text}")
+
         # Step 8: Generate masks for all bubbles across all images
-        if not silent:
-            print(f"\n{'='*50}")
-            print("Generating bubble masks for all images...")
-            print(f"{'='*50}")
-        
+        console.section("Generating bubble masks for all images...")
+
         all_bubble_masks = []
         for page_idx, (input_image, bubble_texts) in enumerate(zip(input_images, all_bubble_texts)):
             if bubble_texts:
                 bubble_masks = _generate_bubble_masks(
                     input_image,
                     bubble_texts,
-                    threshold_value,
-                    silent
+                    config.threshold_value,
+                    console.quiet
                 )
                 all_bubble_masks.append(bubble_masks)
                 results_by_path[input_image_paths[page_idx]]['bubble_masks'] = bubble_masks
             else:
                 all_bubble_masks.append({})
-        
+
         # Step 9: Create bubble interiors visualizations
         for page_idx, (input_image, bubble_texts, bubble_masks, input_path_str, output_filename) in enumerate(
             zip(input_images, all_bubble_texts, all_bubble_masks, input_image_paths, output_filenames)
@@ -1087,22 +987,19 @@ def translate_manga_page_batch(
                     input_image,
                     bubble_texts,
                     bubble_masks,
-                    save_bubble_interiors,
+                    config.save_bubble_interiors,
                     output_base,
                     output_filename,
                     output_subfolder,
-                    silent
+                    console.quiet
                 )
                 if bubble_interiors_pil is not None:
                     results_by_path[input_path_str]['bubble_interiors_visualization'] = bubble_interiors_pil
                 results_by_path[input_path_str]['output_paths'].update(output_paths)
-        
+
         # Step 10: Clean all images
-        if not silent:
-            print(f"\n{'='*50}")
-            print("Clearing speech bubbles for all images...")
-            print(f"{'='*50}")
-        
+        console.section("Clearing speech bubbles for all images...")
+
         all_cleaned_images = []
         for page_idx, (input_image, japanese_bboxes, input_path_str, output_filename) in enumerate(
             zip(input_images, all_japanese_bboxes, input_image_paths, output_filenames)
@@ -1111,25 +1008,22 @@ def translate_manga_page_batch(
                 cleaned_image_pil, output_paths = _clean_bubble_interiors(
                     input_image,
                     japanese_bboxes,
-                    threshold_value,
-                    save_cleaned,
+                    config.threshold_value,
+                    config.save_cleaned,
                     output_base,
                     output_filename,
                     output_subfolder,
-                    silent
+                    console.quiet
                 )
                 all_cleaned_images.append(cleaned_image_pil)
                 results_by_path[input_path_str]['cleaned_image'] = cleaned_image_pil
                 results_by_path[input_path_str]['output_paths'].update(output_paths)
             else:
                 all_cleaned_images.append(input_image)
-        
+
         # Step 11: Draw translated text on all images
-        if not silent:
-            print(f"\n{'='*50}")
-            print("Drawing translated text on all images...")
-            print(f"{'='*50}")
-        
+        console.section("Drawing translated text on all images...")
+
         for page_idx, (cleaned_image, bubble_texts, bubble_masks, input_path_str, output_filename) in enumerate(
             zip(all_cleaned_images, all_bubble_texts, all_bubble_masks, input_image_paths, output_filenames)
         ):
@@ -1138,85 +1032,51 @@ def translate_manga_page_batch(
                     cleaned_image,
                     bubble_texts,
                     bubble_masks,
-                    font_path,
-                    save_translated,
+                    config.font_path,
+                    config.save_translated,
                     output_base,
                     output_filename,
                     output_subfolder,
-                    silent
+                    console.quiet
                 )
                 results_by_path[input_path_str]['translated_image'] = translated_image
                 results_by_path[input_path_str]['bubble_texts'] = bubble_texts
                 results_by_path[input_path_str]['output_paths'].update(output_paths)
-        
-        if not silent:
-            print("\n" + "=" * 50)
-            print(f"Batch processing complete! Processed {len(input_image_paths)} page(s)")
-            print("=" * 50)
-    
+            elif config.save_translated:
+                translated_path = _get_output_file_path(
+                    output_base, "translated", f"{output_filename}_translated.png", output_subfolder
+                )
+                save_pil_image(cleaned_image, str(translated_path), print_message=not console.quiet)
+                results_by_path[input_path_str]['output_paths']['translated'] = str(translated_path)
+                results_by_path[input_path_str]['translated_image'] = cleaned_image
+
+        console.section(f"Batch processing complete! Processed {len(input_image_paths)} page(s)")
+
     except Exception as e:
-        if not silent:
-            print(f"Error in batch manga translation: {e}")
+        console.error(f"Error in batch manga translation: {e}")
         raise
-    
+
     return results_by_path
 
 
 def translate_manga_folder(
     input_folder: str,
     output_folder: str,
-    # Detection parameters
-    conf_threshold: float = 0.25,
-    iou_threshold: float = 0.45,
-    parent_box_threshold: int = 10,
-    bbox_processing: str = 'remove-parent',
-    # Bubble processing parameters
-    threshold_value: int = 200,
-    # Text parameters
-    font_path: Optional[str] = None,
-    # Translation parameters
-    translation_model_path: Optional[str] = None,
-    translation_device: str = 'cpu',
-    translation_beam_size: int = 5,
-    # OCR parameters
-    ocr_model_id: str = "jzhang533/PaddleOCR-VL-For-Manga",
-    ocr_max_new_tokens: int = 2048,
-    # Output toggles
-    save_speech_bubbles: bool = False,
-    save_bubble_interiors: bool = False,
-    save_cleaned: bool = False,
-    save_translated: bool = True,
-    # Processing options
-    silent: bool = False,
-    continue_on_error: bool = True
+    config: Config,
+    console: Console
 ) -> Dict[str, Any]:
     """
     Translate all manga pages in a folder from Japanese to English.
-    
+
     Processes all supported image files in the input folder, reusing the detection
     model across pages for efficiency. Each page is processed using translate_manga_page.
-    
+
     Args:
         input_folder: Path to folder containing manga page images
         output_folder: Base folder path for all outputs (same structure as translate_manga_page)
-        conf_threshold: Confidence threshold for bubble detection (0-1)
-        iou_threshold: IoU threshold for NMS (0-1)
-        parent_box_threshold: Threshold for processing compound speech bubbles
-        bbox_processing: Compound speech bubble processing mode ('remove-parent', 'combine-children', or 'none')
-        threshold_value: Threshold for bubble mask detection
-        font_path: Path to font file (None to use system default)
-        translation_model_path: Path to translation model (None for default)
-        translation_device: Device for translation ('cpu' or 'cuda')
-        translation_beam_size: Beam size for translation
-        ocr_model_id: Hugging Face model ID for OCR
-        ocr_max_new_tokens: Maximum tokens for OCR generation
-        save_speech_bubbles: If True, save annotated detection images
-        save_bubble_interiors: If True, save blue bubble interior visualizations
-        save_cleaned: If True, save cleaned images (before text drawing)
-        save_translated: If True, save final translated images
-        verbose: If True, print progress messages
-        continue_on_error: If True, continue processing other pages if one fails
-    
+        config: Configuration object containing pipeline parameters
+        console: Console object for output messages
+
     Returns:
         Dictionary containing:
         - 'processed_files': List of successfully processed file paths
@@ -1231,24 +1091,23 @@ def translate_manga_folder(
         raise ValueError(f"Input folder does not exist: {input_folder}")
     if not input_path.is_dir():
         raise ValueError(f"Input path is not a directory: {input_folder}")
-    
+
     # Extract folder name for organizing outputs
     folder_name = input_path.name
-    
+
     # Find all image files
     image_files = [
         f for f in input_path.iterdir()
         if f.is_file() and f.suffix in SUPPORTED_IMAGE_EXTENSIONS
     ]
-    
+
     # Sort files for consistent processing order
     image_files.sort(key=lambda x: x.name)
-    
+
     total_files = len(image_files)
-    
+
     if total_files == 0:
-        if not silent:
-            print(f"No image files found in {input_folder}")
+        console.info(f"No image files found in {input_folder}")
         return {
             'processed_files': [],
             'failed_files': [],
@@ -1257,87 +1116,61 @@ def translate_manga_folder(
             'successful_count': 0,
             'failed_count': 0
         }
-    
-    if not silent:
-        print("\n" + "=" * 50)
-        print(f"Found {total_files} image file(s) to process")
-        print("=" * 50)
-    
+
+    console.section(f"Found {total_files} image file(s) to process")
+
     # Load detection model once for reuse across all pages
     detection_model = None
-    if not silent:
-        print("\nLoading detection model (will be reused for all pages)...")
+    console.info("Loading detection model (will be reused for all pages)...")
     try:
         detection_model = load_bubble_detection_model()
     except Exception as e:
-        if not continue_on_error:
+        if config.stop_on_error:
             raise
-        if not silent:
-            print(f"Warning: Could not load detection model: {e}")
-    
+        console.error(f"Warning: Could not load detection model: {e}")
+
     # Process each image file
     processed_files = []
     failed_files = []
     results_by_file = {}
-    
+
     for i, image_file in enumerate(image_files, 1):
-        if not silent:
-            print("\n" + "=" * 50)
-            print(f"Processing file {i}/{total_files}: {image_file.name}")
-            print("=" * 50)
-        
+        console.section(f"Processing file {i}/{total_files}: {image_file.name}")
+
         try:
             # Use translate_manga_page with pre-loaded model
             result = translate_manga_page(
                 input_image_path=str(image_file),
                 output_folder=output_folder,
+                config=config,
+                console=console,
                 detection_model=detection_model,
-                conf_threshold=conf_threshold,
-                iou_threshold=iou_threshold,
-                parent_box_threshold=parent_box_threshold,
-                bbox_processing=bbox_processing,
-                threshold_value=threshold_value,
-                font_path=font_path,
-                translation_model_path=translation_model_path,
-                translation_device=translation_device,
-                translation_beam_size=translation_beam_size,
-                ocr_model_id=ocr_model_id,
-                ocr_max_new_tokens=ocr_max_new_tokens,
-                save_speech_bubbles=save_speech_bubbles,
-                save_bubble_interiors=save_bubble_interiors,
-                save_cleaned=save_cleaned,
-                save_translated=save_translated,
                 output_filename=None,  # Use input filename
-                output_subfolder=folder_name,  # Organize outputs by folder name
-                silent=silent
+                output_subfolder=folder_name  # Organize outputs by folder name
             )
-            
+
             processed_files.append(str(image_file))
             results_by_file[str(image_file)] = result
-            
+
         except Exception as e:
             error_msg = str(e)
             failed_files.append((str(image_file), error_msg))
-            
-            if not silent:
-                print(f"\nError processing {image_file.name}: {error_msg}")
-            
-            if not continue_on_error:
+
+            console.error(f"Error processing {image_file.name}: {error_msg}")
+
+            if config.stop_on_error:
                 raise
-    
+
     # Print summary
-    if not silent:
-        print("\n" + "=" * 50)
-        print("Folder processing complete!")
-        print("=" * 50)
-        print(f"Total files: {total_files}")
-        print(f"Successfully processed: {len(processed_files)}")
-        print(f"Failed: {len(failed_files)}")
-        if failed_files:
-            print("\nFailed files:")
-            for file_path, error in failed_files:
-                print(f"  - {Path(file_path).name}: {error}")
-    
+    console.section("Folder processing complete!")
+    console.info(f"Total files: {total_files}")
+    console.success(f"Successfully processed: {len(processed_files)}")
+    if failed_files:
+        console.error(f"Failed: {len(failed_files)}")
+        console.print("\nFailed files:")
+        for file_path, error in failed_files:
+            console.print(f"  - {Path(file_path).name}: {error}")
+
     return {
         'processed_files': processed_files,
         'failed_files': failed_files,
@@ -1351,58 +1184,23 @@ def translate_manga_folder(
 def translate_manga_folder_batch(
     input_folder: str,
     output_folder: str,
-    # Detection parameters
-    conf_threshold: float = 0.25,
-    iou_threshold: float = 0.45,
-    parent_box_threshold: int = 10,
-    bbox_processing: str = 'remove-parent',
-    # Bubble processing parameters
-    threshold_value: int = 200,
-    # Text parameters
-    font_path: Optional[str] = None,
-    # Translation parameters
-    translation_model_path: Optional[str] = None,
-    translation_device: str = 'cpu',
-    translation_beam_size: int = 5,
-    # OCR parameters
-    ocr_model_id: str = "jzhang533/PaddleOCR-VL-For-Manga",
-    ocr_max_new_tokens: int = 2048,
-    # Output toggles
-    save_speech_bubbles: bool = False,
-    save_bubble_interiors: bool = False,
-    save_cleaned: bool = False,
-    save_translated: bool = True,
-    # Processing options
-    silent: bool = False,
+    config: Config,
+    console: Console,
     batch_amount: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Translate all manga pages in a folder using batch processing.
-    
+
     Processes all supported image files in the input folder using batch processing,
     where all pages go through each pipeline step together for efficiency.
-    
+
     Args:
         input_folder: Path to folder containing manga page images
         output_folder: Base folder path for all outputs
-        conf_threshold: Confidence threshold for bubble detection (0-1)
-        iou_threshold: IoU threshold for NMS (0-1)
-        parent_box_threshold: Threshold for processing compound speech bubbles
-        bbox_processing: Compound speech bubble processing mode ('remove-parent', 'combine-children', or 'none')
-        threshold_value: Threshold for bubble mask detection
-        font_path: Path to font file (None to use system default)
-        translation_model_path: Path to translation model (None for default)
-        translation_device: Device for translation ('cpu' or 'cuda')
-        translation_beam_size: Beam size for translation
-        ocr_model_id: Hugging Face model ID for OCR
-        ocr_max_new_tokens: Maximum tokens for OCR generation
-        save_speech_bubbles: If True, save annotated detection images
-        save_bubble_interiors: If True, save blue bubble interior visualizations
-        save_cleaned: If True, save cleaned images (before text drawing)
-        save_translated: If True, save final translated images
-        silent: If True, suppress progress messages
+        config: Configuration object containing pipeline parameters
+        console: Console object for output messages
         batch_amount: Maximum number of pages to process in each batch (None = process all at once)
-    
+
     Returns:
         Dictionary containing:
         - 'processed_files': List of successfully processed file paths
@@ -1417,24 +1215,23 @@ def translate_manga_folder_batch(
         raise ValueError(f"Input folder does not exist: {input_folder}")
     if not input_path.is_dir():
         raise ValueError(f"Input path is not a directory: {input_folder}")
-    
+
     # Extract folder name for organizing outputs
     folder_name = input_path.name
-    
+
     # Find all image files
     image_files = [
         f for f in input_path.iterdir()
         if f.is_file() and f.suffix in SUPPORTED_IMAGE_EXTENSIONS
     ]
-    
+
     # Sort files for consistent processing order
     image_files.sort(key=lambda x: x.name)
-    
+
     total_files = len(image_files)
-    
+
     if total_files == 0:
-        if not silent:
-            print(f"No image files found in {input_folder}")
+        console.info(f"No image files found in {input_folder}")
         return {
             'processed_files': [],
             'failed_files': [],
@@ -1443,85 +1240,62 @@ def translate_manga_folder_batch(
             'successful_count': 0,
             'failed_count': 0
         }
-    
-    if not silent:
-        print("\n" + "=" * 50)
-        print(f"Found {total_files} image file(s) to process (batch mode)")
-        print("=" * 50)
-    
+
+    console.section(f"Found {total_files} image file(s) to process (batch mode)")
+
     # Load detection model once for reuse across all pages
     detection_model = None
-    if not silent:
-        print("\nLoading detection model (will be reused for all pages)...")
+    console.info("Loading detection model (will be reused for all pages)...")
     try:
         detection_model = load_bubble_detection_model()
     except Exception as e:
-        if not silent:
-            print(f"Warning: Could not load detection model: {e}")
+        console.error(f"Warning: Could not load detection model: {e}")
         raise
-    
+
     # Process all files using batch processing
     processed_files = []
     failed_files = []
     results_by_file = {}
-    
+
     # Convert to list of string paths
     image_paths = [str(f) for f in image_files]
-    
+
     try:
         # Call batch processing function
         batch_results = translate_manga_page_batch(
             input_image_paths=image_paths,
             output_folder=output_folder,
+            config=config,
+            console=console,
             detection_model=detection_model,
-            conf_threshold=conf_threshold,
-            iou_threshold=iou_threshold,
-            parent_box_threshold=parent_box_threshold,
-            bbox_processing=bbox_processing,
-            threshold_value=threshold_value,
-            font_path=font_path,
-            translation_model_path=translation_model_path,
-            translation_device=translation_device,
-            translation_beam_size=translation_beam_size,
-            ocr_model_id=ocr_model_id,
-            ocr_max_new_tokens=ocr_max_new_tokens,
-            save_speech_bubbles=save_speech_bubbles,
-            save_bubble_interiors=save_bubble_interiors,
-            save_cleaned=save_cleaned,
-            save_translated=save_translated,
             output_subfolder=folder_name,
-            batch_amount=batch_amount,
-            silent=silent
+            batch_amount=batch_amount
         )
-        
+
         # Process results
         for file_path, result in batch_results.items():
             processed_files.append(file_path)
             results_by_file[file_path] = result
-        
+
     except Exception as e:
         error_msg = str(e)
         # Mark all remaining files as failed
         for file_path in image_paths:
             if file_path not in processed_files:
                 failed_files.append((file_path, error_msg))
-        if not silent:
-            print(f"\nError in batch processing: {error_msg}")
+        console.error(f"Error in batch processing: {error_msg}")
         raise
-    
+
     # Print summary
-    if not silent:
-        print("\n" + "=" * 50)
-        print("Batch folder processing complete!")
-        print("=" * 50)
-        print(f"Total files: {total_files}")
-        print(f"Successfully processed: {len(processed_files)}")
-        print(f"Failed: {len(failed_files)}")
-        if failed_files:
-            print("\nFailed files:")
-            for file_path, error in failed_files:
-                print(f"  - {Path(file_path).name}: {error}")
-    
+    console.section("Batch folder processing complete!")
+    console.info(f"Total files: {total_files}")
+    console.success(f"Successfully processed: {len(processed_files)}")
+    if failed_files:
+        console.error(f"Failed: {len(failed_files)}")
+        console.print("\nFailed files:")
+        for file_path, error in failed_files:
+            console.print(f"  - {Path(file_path).name}: {error}")
+
     return {
         'processed_files': processed_files,
         'failed_files': failed_files,

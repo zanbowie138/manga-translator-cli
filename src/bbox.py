@@ -329,9 +329,7 @@ def remove_parent_boxes(boxes: List[Union[List[float], BoundingBox]], threshold:
         # Only keep boxes that are not parents
         if not is_parent:
             filtered.append(current_bbox)
-        else:
-            print(f"  Removed parent box from compound speech bubble, keeping child box")
-    
+
     return filtered
 
 
@@ -385,11 +383,10 @@ def combine_overlapping_bubbles(boxes: List[Union[List[float], BoundingBox]], to
             # Merge bounding boxes
             for other_bbox in to_merge:
                 current_bbox = current_bbox.merge(other_bbox)
-            
+
             merged.append(current_bbox)
-            print(f"  Merged {len(to_merge) + 1} overlapping/touching compound speech bubbles into one")
         else:
             # No merging needed, keep as is
             merged.append(current_bbox)
-    
+
     return merged

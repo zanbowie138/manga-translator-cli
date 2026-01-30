@@ -121,15 +121,13 @@ def get_font_size_for_box(text, bbox_width, bbox_height, font_path=None, max_siz
     # Fallback: calculate based on dimensions
     fallback_size = int(min(bbox_width, bbox_height) * 0.20)
     fallback_size = max(min_size, min(fallback_size, max_size))
-    
+
     font = ImageFont.truetype(font_path, fallback_size)
     avg_char_width = font.getlength('M')
-    
+
     chars_per_line = max(1, int(bbox_width * 0.90 / avg_char_width))
     wrapped_lines = textwrap.wrap(text, width=chars_per_line)
 
-    print(f"Failed to find a good font size, using fallback size: {fallback_size}")
-    
     return font, wrapped_lines
 
 def draw_text_with_outline(draw, text, position, font, fill_color='black', outline_color='white', outline_width=10):

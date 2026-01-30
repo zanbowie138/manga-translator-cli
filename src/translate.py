@@ -2,6 +2,7 @@ import ctranslate2
 import sentencepiece
 from huggingface_hub import snapshot_download
 import os
+from tqdm import tqdm
 
 # Cache for loaded models
 _translator = None
@@ -34,19 +35,18 @@ def load_translation_models(model_path=None, device='cpu'):
     global _translator, _tokenizer_source, _tokenizer_target, _model_path, _device
     
     if model_path is None:
-        model_path = 'sugoi-v4-ja-en-ctranslate2'
+        model_path = os.path.join(os.path.expanduser("~"), ".manga-translate", "sugoi-v4-ja-en-ctranslate2")
     
     # Download model if not exists
     if not os.path.exists(model_path):
-        print(f"Downloading translation model to {model_path}...")
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
         snapshot_download(repo_id='entai2965/sugoi-v4-ja-en-ctranslate2', local_dir=model_path)
-    
+
     # Return cached models if already loaded
     if _translator is not None and _model_path == model_path and _device == device:
         return _translator, _tokenizer_source, _tokenizer_target
-    
+
     # Load models
-    print(f"Loading translation models from {model_path}...")
     sentencepiece_model_path = os.path.join(model_path, 'spm')
     
     _translator = ctranslate2.Translator(model_path, device=device)
@@ -68,7 +68,7 @@ def translate_phrase(text, model_path=None, device='cpu', beam_size=5):
     
     Args:
         text: Japanese text string to translate
-        model_path: Path to model directory (defaults to 'sugoi-v4-ja-en-ctranslate2')
+        model_path: Path to model directory (defaults to '~/.manga-translate/sugoi-v4-ja-en-ctranslate2')
         device: Device to use ('cpu' or 'cuda')
         beam_size: Beam size for translation (default 5)
     
@@ -113,7 +113,7 @@ def translate_batch(
     
     Args:
         texts: List of text strings to translate
-        model_path: Path to model directory (defaults to 'sugoi-v4-ja-en-ctranslate2')
+        model_path: Path to model directory (defaults to '~/.manga-translate/sugoi-v4-ja-en-ctranslate2')
         device: Device to use ('cpu' or 'cuda')
         beam_size: Beam size for translation (default 5)
         silent: If True, suppress progress messages
@@ -134,54 +134,51 @@ def translate_batch(
             text_indices.append(idx)
     
     if not texts_to_translate:
-        if not silent:
-            print("\nNo Japanese text found to translate.")
         return [""] * len(texts)
-    
-    if not silent:
-        print(f"\nTranslating {len(texts_to_translate)} text(s) with Japanese characters...")
-    
+
     # Load translation models
     translator, tokenizer_source, tokenizer_target = load_translation_models(model_path, device)
-    
-    # Tokenize all texts
+
+    # Tokenize all texts with progress bar
     tokenized_texts = []
     valid_indices = []
-    for idx, text in zip(text_indices, texts_to_translate):
+    iterator = tqdm(zip(text_indices, texts_to_translate), total=len(texts_to_translate),
+                   desc="Tokenizing", disable=silent, unit="text")
+
+    for idx, text in iterator:
         try:
             tokenized = tokenizer_source.encode(text, out_type=str)
             tokenized_texts.append(tokenized)
             valid_indices.append(idx)
-        except Exception as e:
-            if not silent:
-                print(f"Error tokenizing text at index {idx}: {e}")
-    
+        except Exception:
+            pass
+
     if not tokenized_texts:
         return [""] * len(texts)
-    
+
     # Batch translate
     try:
+        if not silent:
+            # Show a simple message for the actual translation step (happens quickly)
+            print(f"Translating {len(tokenized_texts)} texts...")
         translated_results = translator.translate_batch(
             source=tokenized_texts,
             beam_size=beam_size
         )
-    except Exception as e:
-        if not silent:
-            print(f"Error in batch translation: {e}")
+    except Exception:
         return [""] * len(texts)
-    
+
     # Initialize result list with empty strings
     translated_texts = [""] * len(texts)
-    
+
     # Decode translations and map back to original indices
     for idx, translated_result in zip(valid_indices, translated_results):
         try:
             translated_text = tokenizer_target.decode(translated_result.hypotheses[0]).replace('<unk>', '')
             translated_texts[idx] = translated_text
-        except Exception as e:
-            if not silent:
-                print(f"Error decoding translation at index {idx}: {e}")
-    
+        except Exception:
+            pass
+
     return translated_texts
 
 
@@ -199,7 +196,7 @@ def translate_individual(
     
     Args:
         texts: List of text strings to translate
-        model_path: Path to model directory (defaults to 'sugoi-v4-ja-en-ctranslate2')
+        model_path: Path to model directory (defaults to '~/.manga-translate/sugoi-v4-ja-en-ctranslate2')
         device: Device to use ('cpu' or 'cuda')
         beam_size: Beam size for translation (default 5)
         silent: If True, suppress progress messages
@@ -220,37 +217,34 @@ def translate_individual(
             text_indices.append(idx)
     
     if not texts_to_translate:
-        if not silent:
-            print("\nNo Japanese text found to translate.")
         return [""] * len(texts)
-    
-    if not silent:
-        print(f"\nTranslating {len(texts_to_translate)} text(s) with Japanese characters...")
-    
+
     # Load translation models once
     translator, tokenizer_source, tokenizer_target = load_translation_models(model_path, device)
-    
+
     # Initialize result list with empty strings
     translated_texts = [""] * len(texts)
-    
-    # Process each text individually
-    for idx, text in zip(text_indices, texts_to_translate):
+
+    # Process each text individually with progress bar
+    iterator = tqdm(zip(text_indices, texts_to_translate), total=len(texts_to_translate),
+                   desc="Translating", disable=silent, unit="text")
+
+    for idx, text in iterator:
         try:
             # Tokenize
             tokenized = tokenizer_source.encode(text, out_type=str)
-            
+
             # Translate (single text, but still use translate_batch API)
             translated_results = translator.translate_batch(
                 source=[tokenized],
                 beam_size=beam_size
             )
-            
+
             # Decode
             translated_text = tokenizer_target.decode(translated_results[0].hypotheses[0]).replace('<unk>', '')
             translated_texts[idx] = translated_text
-            
-        except Exception as e:
-            if not silent:
-                print(f"Error translating text at index {idx}: {e}")
-    
+
+        except Exception:
+            pass
+
     return translated_texts

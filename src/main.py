@@ -10,6 +10,9 @@ import sys
 import time
 from pathlib import Path
 from .manga_translate import translate_manga_page, translate_manga_folder, translate_manga_page_batch, translate_manga_folder_batch
+from .config import Config
+from .console import Console
+from .output_manager import OutputManager
 
 
 def parse_args():
@@ -236,10 +239,10 @@ def validate_args(args):
 def main():
     """Main CLI entry point."""
     args = parse_args()
-    
+
     if not validate_args(args):
         sys.exit(1)
-    
+
     # Determine output toggles
     if args.save_all:
         save_speech_bubbles = True
@@ -251,46 +254,50 @@ def main():
         save_bubble_interiors = args.save_bubble_interiors
         save_cleaned = args.save_cleaned
         save_translated = not args.no_translated
-    
-    silent = args.quiet
-    
-    # Common parameters for both functions
-    common_params = {
-        'conf_threshold': args.conf_threshold,
-        'iou_threshold': args.iou_threshold,
-        'parent_box_threshold': args.parent_box_threshold,
-        'bbox_processing': args.bbox_processing,
-        'threshold_value': args.threshold_value,
-        'font_path': args.font,
-        'translation_model_path': args.translation_model,
-        'translation_device': args.device,
-        'translation_beam_size': args.beam_size,
-        'ocr_model_id': args.ocr_model,
-        'ocr_max_new_tokens': args.ocr_max_tokens,
-        'save_speech_bubbles': save_speech_bubbles,
-        'save_bubble_interiors': save_bubble_interiors,
-        'save_cleaned': save_cleaned,
-        'save_translated': save_translated,
-        'silent': silent
-    }
+
+    # Create configuration
+    config = Config(
+        conf_threshold=args.conf_threshold,
+        iou_threshold=args.iou_threshold,
+        parent_box_threshold=args.parent_box_threshold,
+        bbox_processing=args.bbox_processing,
+        threshold_value=args.threshold_value,
+        font_path=args.font,
+        translation_model_path=args.translation_model,
+        translation_device=args.device,
+        translation_beam_size=args.beam_size,
+        ocr_model_id=args.ocr_model,
+        ocr_max_new_tokens=args.ocr_max_tokens,
+        save_speech_bubbles=save_speech_bubbles,
+        save_bubble_interiors=save_bubble_interiors,
+        save_cleaned=save_cleaned,
+        save_translated=save_translated,
+        silent=args.quiet,
+        stop_on_error=args.stop_on_error,
+        batch=args.batch,
+        batch_amount=args.batch_amount
+    )
+
+    # Create console handler
+    console = Console(quiet=args.quiet)
     
     try:
         # Start benchmark timer if enabled
         start_time = time.time() if args.benchmark else None
-        
+
         supported_extensions = {'.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG', '.webp', '.WEBP'}
         total_processed = 0
         total_failed = 0
         all_results = []
-        
+
         # Collect all images for batch processing (if enabled)
         all_batch_images = []
-        
+
         if args.batch:
             # Collect all images from folders and individual files
             for input_str in args.input:
                 input_path = Path(input_str)
-                
+
                 if input_path.is_dir():
                     # Collect all images from this folder
                     image_files = [
@@ -299,28 +306,24 @@ def main():
                     ]
                     image_files.sort(key=lambda x: Path(x).name)
                     all_batch_images.extend(image_files)
-                    
-                    if not silent:
-                        print(f"Collected {len(image_files)} image(s) from folder: {input_str}")
-                
+
+                    console.info(f"Collected {len(image_files)} image(s) from folder: {input_str}")
+
                 elif input_path.is_file() and input_path.suffix in supported_extensions:
                     all_batch_images.append(input_str)
-            
+
             # Process all collected images together in batch mode
             if all_batch_images:
-                if not silent:
-                    print(f"\n{'='*50}")
-                    print(f"Batch processing {len(all_batch_images)} image(s) from all inputs...")
-                    print(f"{'='*50}")
-                
+                console.section(f"Batch processing {len(all_batch_images)} image(s) from all inputs...")
+
                 try:
                     results_dict = translate_manga_page_batch(
                         input_image_paths=all_batch_images,
                         output_folder=args.output,
-                        batch_amount=args.batch_amount,
-                        **common_params
+                        config=config,
+                        console=console
                     )
-                    
+
                     # Process results
                     for input_str in all_batch_images:
                         results = results_dict.get(input_str, {})
@@ -329,102 +332,95 @@ def main():
                             all_results.append(('file', input_str, results))
                         else:
                             total_failed += 1
-                    
-                    if not silent:
-                        print(f"\nBatch processing complete: {total_processed} successful, {total_failed} failed")
+
+                    console.success(f"Batch processing complete: {total_processed} successful, {total_failed} failed")
                 except Exception as e:
-                    if not silent:
-                        print(f"Error in batch processing: {e}")
+                    console.error(f"Error in batch processing: {e}")
                     if args.stop_on_error:
                         raise
                     total_failed = len(all_batch_images)
             else:
-                if not silent:
-                    print("No images found to process")
+                console.info("No images found to process")
         else:
             # Non-batch mode: process each input separately
             for input_str in args.input:
                 input_path = Path(input_str)
-                
+
                 if input_path.is_dir():
                     # Process folder
-                    if not silent:
-                        print(f"\n{'='*50}")
-                        print(f"Processing folder: {input_str}")
-                        print(f"{'='*50}")
-                    
+                    console.section(f"Processing folder: {input_str}")
+
                     results = translate_manga_folder(
                         input_folder=input_str,
                         output_folder=args.output,
-                        continue_on_error=not args.stop_on_error,
-                        **common_params
+                        config=config,
+                        console=console
                     )
-                    
+
                     total_processed += results['successful_count']
                     total_failed += results['failed_count']
                     all_results.append(('folder', input_str, results))
-                    
-                    if not silent:
-                        print(f"\nFolder '{input_str}' summary:")
-                        print(f"  Total files: {results['total_files']}")
-                        print(f"  Successfully processed: {results['successful_count']}")
-                        print(f"  Failed: {results['failed_count']}")
-                
+
+                    console.print(f"\nFolder '{input_str}' summary:")
+                    console.print(f"  Total files: {results['total_files']}")
+                    console.print(f"  Successfully processed: {results['successful_count']}")
+                    console.print(f"  Failed: {results['failed_count']}")
+
                 elif input_path.is_file() and input_path.suffix in supported_extensions:
                     # Process single file
-                    if not silent:
-                        print(f"\n{'='*50}")
-                        print(f"Processing file: {input_str}")
-                        print(f"{'='*50}")
-                    
+                    console.section(f"Processing file: {input_str}")
+
                     results = translate_manga_page(
                         input_image_path=input_str,
                         output_folder=args.output,
-                        **common_params
+                        config=config,
+                        console=console
                     )
-                    
+
                     if results.get('translated_image'):
                         total_processed += 1
                         all_results.append(('file', input_str, results))
-                        
-                        if not silent:
-                            translated_path = results['output_paths'].get('translated')
-                            if translated_path:
-                                print(f"\nFile '{input_str}' processed successfully!")
-                                print(f"  Output: {translated_path}")
+
+                        translated_path = results['output_paths'].get('translated')
+                        if translated_path:
+                            console.success(f"File '{input_str}' processed successfully!")
+                            console.print(f"  Output: {translated_path}")
                     else:
                         total_failed += 1
-                        if not silent:
-                            print(f"\nFile '{input_str}' failed to process")
+                        console.error(f"File '{input_str}' failed to process")
         
         # Print overall summary if multiple inputs
-        if len(args.input) > 1 and not silent:
-            print(f"\n{'='*50}")
-            print("Overall Summary")
-            print(f"{'='*50}")
-            print(f"Total inputs: {len(args.input)}")
-            print(f"Successfully processed: {total_processed}")
-            print(f"Failed: {total_failed}")
-        
+        if len(args.input) > 1:
+            console.section("Overall Summary")
+            console.print(f"Total inputs: {len(args.input)}")
+            console.print(f"Successfully processed: {total_processed}")
+            console.print(f"Failed: {total_failed}")
+
         # Print benchmark results if enabled
         if args.benchmark and start_time is not None:
+            from rich.table import Table
+
             end_time = time.time()
             elapsed_time = end_time - start_time
-            print(f"\n{'='*50}")
-            print("Benchmark Results")
-            print(f"{'='*50}")
-            print(f"Total processing time: {elapsed_time:.2f} seconds")
+
+            table = Table(title="Benchmark Results")
+            table.add_column("Metric", style="cyan")
+            table.add_column("Value", style="green")
+
+            table.add_row("Total processing time", f"{elapsed_time:.2f} seconds")
             if total_processed > 0:
                 avg_time_per_page = elapsed_time / total_processed
-                print(f"Average time per page: {avg_time_per_page:.2f} seconds")
-            print(f"{'='*50}")
+                table.add_row("Average time per page", f"{avg_time_per_page:.2f} seconds")
+            table.add_row("Total pages processed", str(total_processed))
+
+            console.console.print(table)
     
     except KeyboardInterrupt:
-        print("\n\nInterrupted by user", file=sys.stderr)
+        console.error("\nInterrupted by user")
         sys.exit(130)
     except Exception as e:
-        print(f"\nError: {e}", file=sys.stderr)
-        if not silent:
+        console.error(f"Error: {e}")
+        if not args.quiet:
             import traceback
             traceback.print_exc()
         sys.exit(1)
