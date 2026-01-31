@@ -14,6 +14,21 @@ from .config import Config
 from .console import Console
 from .output_manager import OutputManager
 
+# Default font path - works in both dev and installed environments
+# Font is located in src/fonts/ which gets included in the package
+DEFAULT_FONT_PATH = str(Path(__file__).parent / "fonts" / "CC Astro City Int Regular.ttf")
+
+# Auto-detect best available device
+def get_default_device():
+    """Detect and return the best available device (cuda if available, else cpu)."""
+    try:
+        import torch
+        return 'cuda' if torch.cuda.is_available() else 'cpu'
+    except ImportError:
+        return 'cpu'
+
+DEFAULT_DEVICE = get_default_device()
+
 
 def parse_args():
     """Parse command-line arguments."""
@@ -98,7 +113,7 @@ Examples:
     parser.add_argument(
         '--font',
         type=str,
-        default='fonts/CC Astro City Int Regular.ttf',
+        default=DEFAULT_FONT_PATH,
         help='Path to font file (default: fonts/CC Astro City Int Regular.ttf)'
     )
     
@@ -112,9 +127,9 @@ Examples:
     parser.add_argument(
         '--device',
         type=str,
-        default='cpu',
+        default=DEFAULT_DEVICE,
         choices=['cpu', 'cuda'],
-        help='Device for translation (default: cpu)'
+        help=f'Device for translation (default: auto-detect, currently {DEFAULT_DEVICE})'
     )
     parser.add_argument(
         '--beam-size',
@@ -224,20 +239,31 @@ def validate_args(args):
             print(f"Error: Input path is neither a file nor a directory: {input_str}", file=sys.stderr)
             all_valid = False
     
+    # Validate font file
+    if args.font:
+        font_path = Path(args.font)
+        if not font_path.exists():
+            print(f"Error: Font file does not exist: {args.font}", file=sys.stderr)
+            all_valid = False
+        elif not font_path.is_file():
+            print(f"Error: Font path is not a file: {args.font}", file=sys.stderr)
+            all_valid = False
+
     # Validate thresholds
     if not 0 <= args.conf_threshold <= 1:
         print(f"Error: conf-threshold must be between 0 and 1", file=sys.stderr)
         all_valid = False
-    
+
     if not 0 <= args.iou_threshold <= 1:
         print(f"Error: iou-threshold must be between 0 and 1", file=sys.stderr)
         all_valid = False
-    
+
     return all_valid
 
 
 def main():
     """Main CLI entry point."""
+    print("Manga Translator CLI initializing...")
     args = parse_args()
 
     if not validate_args(args):
@@ -280,7 +306,15 @@ def main():
 
     # Create console handler
     console = Console(quiet=args.quiet)
-    
+
+    # Print startup info
+    console.info("Manga Translation CLI")
+    console.info(f"Device: {args.device.upper()}")
+    console.info(f"Output: {args.output}")
+    if args.batch:
+        console.info("Mode: Batch processing")
+    console.info("Loading models (first run may download models)...")
+
     try:
         # Start benchmark timer if enabled
         start_time = time.time() if args.benchmark else None

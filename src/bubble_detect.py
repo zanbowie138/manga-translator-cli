@@ -10,29 +10,47 @@ MODEL_DIR = os.path.join(os.path.expanduser("~"), ".manga-translate", "cached_mo
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 # Cache for currently loaded model
-current_model = None
-current_model_name = None
+_cached_model = None
+_cached_key = None
 
-def load_bubble_detection_model(model_path=None):
+def _normalize_model_path(model_path):
+    """Normalize model path for cache comparison."""
+    if model_path is None:
+        return None
+    expanded = os.path.expanduser(model_path)
+    return os.path.normpath(os.path.abspath(expanded))
+
+def load_bubble_detection_model(model_path=None, silent=False):
     """Load the YOLO model, downloading from Hugging Face if needed"""
-    global current_model, current_model_name
+    global _cached_model, _cached_key
 
     if model_path is None:
         # Download model from Hugging Face (hf_hub_download shows its own progress)
+        if not silent:
+            print(f"Downloading YOLO model to: {MODEL_DIR}")
         model_path = hf_hub_download(
             repo_id="kitsumed/yolov8m_seg-speech-bubble",
             filename="model.pt",
             local_dir=MODEL_DIR
         )
+        if not silent:
+            print(f"Model downloaded to: {model_path}")
+
+    # Normalize path for cache comparison
+    normalized_path = _normalize_model_path(model_path)
 
     # Check if this is the same model already loaded
-    if model_path == current_model_name:
-        return current_model
+    if _cached_model is not None and normalized_path == _cached_key:
+        if not silent:
+            print(f"Using cached YOLO model from: {model_path}")
+        return _cached_model
 
     # Load the model
-    current_model = YOLO(model_path)
-    current_model_name = model_path
-    return current_model
+    if not silent:
+        print(f"Loading YOLO model from: {model_path}")
+    _cached_model = YOLO(model_path)
+    _cached_key = normalized_path
+    return _cached_model
 
 def run_detection(model, image: Image.Image, conf_threshold=0.25, iou_threshold=0.45, silent=False):
     """

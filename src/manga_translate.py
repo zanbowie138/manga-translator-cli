@@ -270,6 +270,7 @@ def _extract_and_translate_text(
             images_to_process,
             model_id=ocr_model_id,
             max_new_tokens=ocr_max_new_tokens,
+            device=translation_device,
             silent=silent
         )
         
@@ -596,7 +597,7 @@ def translate_manga_page(
         # Load detection model
         if detection_model is None:
             console.info("Loading detection model...")
-            detection_model = load_bubble_detection_model()
+            detection_model = load_bubble_detection_model(silent=console.quiet)
 
         # Detect speech bubbles
         annotated_bubble_img, boxes, output_paths = _detect_speech_bubbles(
@@ -821,7 +822,7 @@ def translate_manga_page_batch(
         # Step 2: Load detection model
         if detection_model is None:
             console.info("Loading detection model...")
-            detection_model = load_bubble_detection_model()
+            detection_model = load_bubble_detection_model(silent=console.quiet)
 
         # Step 3: Detect bubbles for all images
         console.section(f"Detecting speech bubbles for {len(input_images)} image(s)...")
@@ -912,6 +913,7 @@ def translate_manga_page_batch(
             ocr_images,
             model_id=config.ocr_model_id,
             max_new_tokens=config.ocr_max_new_tokens,
+            device=config.translation_device,
             silent=console.quiet
         )
 
@@ -1123,7 +1125,7 @@ def translate_manga_folder(
     detection_model = None
     console.info("Loading detection model (will be reused for all pages)...")
     try:
-        detection_model = load_bubble_detection_model()
+        detection_model = load_bubble_detection_model(silent=console.quiet)
     except Exception as e:
         if config.stop_on_error:
             raise
@@ -1247,7 +1249,7 @@ def translate_manga_folder_batch(
     detection_model = None
     console.info("Loading detection model (will be reused for all pages)...")
     try:
-        detection_model = load_bubble_detection_model()
+        detection_model = load_bubble_detection_model(silent=console.quiet)
     except Exception as e:
         console.error(f"Warning: Could not load detection model: {e}")
         raise

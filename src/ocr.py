@@ -4,58 +4,79 @@ from transformers import AutoModelForCausalLM, AutoProcessor
 from tqdm import tqdm
 
 # Cache for models
-_processor = None
-_model = None
-_device = None
-_model_id = None
+_cached_processor = None
+_cached_model = None
+_cached_key = None
 
-def load_ocr_model(model_id="jzhang533/PaddleOCR-VL-For-Manga", device=None):
+def _validate_device(device):
+    """Validate device availability."""
+    if device is None:
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but not available")
+    return device
+
+def _get_cache_key(model_id, device):
+    """Create cache key tuple."""
+    return (model_id, device)
+
+def load_ocr_model(model_id="jzhang533/PaddleOCR-VL-For-Manga", device=None, silent=False):
     """
     Load the PaddleOCR-VL model for text extraction
-    
+
     Args:
         model_id: Hugging Face model ID
         device: Device to use ("cuda" or "cpu"), auto-detects if None
-    
+        silent: If True, suppress progress messages
+
     Returns:
         processor, model: Loaded processor and model
     """
-    global _processor, _model, _device, _model_id
-    
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    # Return cached models if same model and device
-    if _model is not None and _model_id == model_id and _device == device:
-        return _processor, _model
+    global _cached_processor, _cached_model, _cached_key
 
-    _processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True, use_fast=True)
-    
-    _model = AutoModelForCausalLM.from_pretrained(
+    device = _validate_device(device)
+    cache_key = _get_cache_key(model_id, device)
+
+    # Return cached models if same model and device
+    if _cached_model is not None and cache_key == _cached_key:
+        if not silent:
+            print(f"Using cached OCR model: {model_id} on {device}")
+        return _cached_processor, _cached_model
+
+    if not silent:
+        print(f"Loading OCR model: {model_id} on {device}")
+        print(f"OCR model will be cached in HuggingFace cache directory")
+
+    _cached_processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True, use_fast=True)
+
+    _cached_model = AutoModelForCausalLM.from_pretrained(
         model_id,
         trust_remote_code=True,
         dtype=torch.bfloat16 if device == "cuda" else torch.float32,
         device_map="auto" if device == "cuda" else None
     )
-    
-    _device = device
-    _model_id = model_id
-    
-    return _processor, _model
 
-def extract_text(image, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_new_tokens=2048):
+    _cached_key = cache_key
+
+    if not silent:
+        print(f"OCR model loaded successfully on {device}")
+
+    return _cached_processor, _cached_model
+
+def extract_text(image, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_new_tokens=2048, device=None):
     """
     Extract text from an image using PaddleOCR-VL
-    
+
     Args:
         image: PIL Image object
         model_id: Hugging Face model ID
         max_new_tokens: Maximum tokens to generate
-    
+        device: Device to use ("cuda" or "cpu"), auto-detects if None
+
     Returns:
         extracted_text: Extracted text string
     """
-    processor, model = load_ocr_model(model_id)
+    processor, model = load_ocr_model(model_id, device=device)
     
     # Prepare the input
     messages = [
@@ -96,7 +117,7 @@ def extract_text(image, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_new_tok
     return extracted_text
 
 
-def extract_text_batch(images, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_new_tokens=2048, silent=False):
+def extract_text_batch(images, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_new_tokens=2048, device=None, silent=False):
     """
     Extract text from multiple images using PaddleOCR-VL (sequential processing for debugging)
 
@@ -107,6 +128,7 @@ def extract_text_batch(images, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_
         images: List of PIL Image objects
         model_id: Hugging Face model ID
         max_new_tokens: Maximum tokens to generate
+        device: Device to use ("cuda" or "cpu"), auto-detects if None
         silent: If True, suppress progress messages
 
     Returns:
@@ -115,14 +137,19 @@ def extract_text_batch(images, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_
     if not images:
         return []
 
+    # Pre-load the model once before processing all images
+    load_ocr_model(model_id, device=device, silent=silent)
+
     extracted_texts = []
     iterator = tqdm(images, desc="Extracting text", disable=silent, unit="bubble")
 
-    for image in iterator:
+    for idx, image in enumerate(iterator):
         try:
-            extracted_text = extract_text(image, model_id=model_id, max_new_tokens=max_new_tokens)
+            extracted_text = extract_text(image, model_id=model_id, max_new_tokens=max_new_tokens, device=device)
             extracted_texts.append(extracted_text)
         except Exception as e:
+            if not silent:
+                print(f"Warning: Error extracting text from bubble {idx+1}: {e}")
             extracted_texts.append("")
 
     return extracted_texts

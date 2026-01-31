@@ -3,13 +3,30 @@ import sentencepiece
 from huggingface_hub import snapshot_download
 import os
 from tqdm import tqdm
+import torch
 
 # Cache for loaded models
-_translator = None
-_tokenizer_source = None
-_tokenizer_target = None
-_model_path = None
-_device = None
+_cached_translator = None
+_cached_tokenizer_source = None
+_cached_tokenizer_target = None
+_cached_key = None
+
+def _validate_device(device):
+    """Validate device availability."""
+    if device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but not available")
+    return device
+
+def _normalize_model_path(model_path):
+    """Normalize model path for cache comparison."""
+    if model_path is None:
+        return None
+    expanded = os.path.expanduser(model_path)
+    return os.path.normpath(os.path.abspath(expanded))
+
+def _get_cache_key(model_path, device):
+    """Create cache key tuple."""
+    return (_normalize_model_path(model_path), device)
 
 def is_cjk(character):
     """"
@@ -30,48 +47,64 @@ def is_cjk(character):
                  (131072, 196607)]
                 ])
 
-def load_translation_models(model_path=None, device='cpu'):
+def load_translation_models(model_path=None, device='cpu', silent=False):
     """Load translation models lazily (only once)"""
-    global _translator, _tokenizer_source, _tokenizer_target, _model_path, _device
-    
+    global _cached_translator, _cached_tokenizer_source, _cached_tokenizer_target, _cached_key
+
+    device = _validate_device(device)
+
     if model_path is None:
         model_path = os.path.join(os.path.expanduser("~"), ".manga-translate", "sugoi-v4-ja-en-ctranslate2")
-    
+
+    cache_key = _get_cache_key(model_path, device)
+
     # Download model if not exists
-    if not os.path.exists(model_path):
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
-        snapshot_download(repo_id='entai2965/sugoi-v4-ja-en-ctranslate2', local_dir=model_path)
+    expanded_path = os.path.expanduser(model_path)
+    if not os.path.exists(expanded_path):
+        if not silent:
+            print(f"Downloading translation model to: {model_path}")
+        os.makedirs(os.path.dirname(expanded_path), exist_ok=True)
+        snapshot_download(repo_id='entai2965/sugoi-v4-ja-en-ctranslate2', local_dir=expanded_path)
+        if not silent:
+            print(f"Translation model downloaded to: {model_path}")
 
     # Return cached models if already loaded
-    if _translator is not None and _model_path == model_path and _device == device:
-        return _translator, _tokenizer_source, _tokenizer_target
+    if _cached_translator is not None and cache_key == _cached_key:
+        if not silent:
+            print(f"Using cached translation model from: {model_path} on {device}")
+        return _cached_translator, _cached_tokenizer_source, _cached_tokenizer_target
 
     # Load models
-    sentencepiece_model_path = os.path.join(model_path, 'spm')
-    
-    _translator = ctranslate2.Translator(model_path, device=device)
-    _tokenizer_source = sentencepiece.SentencePieceProcessor(
+    if not silent:
+        print(f"Loading translation model from: {model_path} on {device}")
+    sentencepiece_model_path = os.path.join(expanded_path, 'spm')
+
+    _cached_translator = ctranslate2.Translator(expanded_path, device=device)
+    _cached_tokenizer_source = sentencepiece.SentencePieceProcessor(
         os.path.join(sentencepiece_model_path, 'spm.ja.nopretok.model')
     )
-    _tokenizer_target = sentencepiece.SentencePieceProcessor(
+    _cached_tokenizer_target = sentencepiece.SentencePieceProcessor(
         os.path.join(sentencepiece_model_path, 'spm.en.nopretok.model')
     )
-    
-    _model_path = model_path
-    _device = device
-    
-    return _translator, _tokenizer_source, _tokenizer_target
 
-def translate_phrase(text, model_path=None, device='cpu', beam_size=5):
+    _cached_key = cache_key
+
+    if not silent:
+        print(f"Translation model loaded successfully")
+
+    return _cached_translator, _cached_tokenizer_source, _cached_tokenizer_target
+
+def translate_phrase(text, model_path=None, device='cpu', beam_size=5, silent=False):
     """
     Translate a Japanese phrase to English
-    
+
     Args:
         text: Japanese text string to translate
         model_path: Path to model directory (defaults to '~/.manga-translate/sugoi-v4-ja-en-ctranslate2')
         device: Device to use ('cpu' or 'cuda')
         beam_size: Beam size for translation (default 5)
-    
+        silent: If True, suppress progress messages
+
     Returns:
         Tuple of (translated_text, success) where:
         - translated_text: Translated English text string (empty if no CJK found)
@@ -80,22 +113,22 @@ def translate_phrase(text, model_path=None, device='cpu', beam_size=5):
     # Check if text contains CJK characters
     if not text or not text.strip():
         return "", False
-    
+
     has_cjk = any(is_cjk(c) for c in text)
     if not has_cjk:
         return "", False
-    
-    translator, tokenizer_source, tokenizer_target = load_translation_models(model_path, device)
-    
+
+    translator, tokenizer_source, tokenizer_target = load_translation_models(model_path, device, silent=silent)
+
     # Tokenize
     tokenized = tokenizer_source.encode(text, out_type=str)
-    
+
     # Translate
     translated = translator.translate_batch(source=[tokenized], beam_size=beam_size)
-    
+
     # Decode
     translated_text = tokenizer_target.decode(translated[0].hypotheses[0]).replace('<unk>', '')
-    
+
     return translated_text, True
 
 
@@ -137,7 +170,7 @@ def translate_batch(
         return [""] * len(texts)
 
     # Load translation models
-    translator, tokenizer_source, tokenizer_target = load_translation_models(model_path, device)
+    translator, tokenizer_source, tokenizer_target = load_translation_models(model_path, device, silent=silent)
 
     # Tokenize all texts with progress bar
     tokenized_texts = []
@@ -150,8 +183,9 @@ def translate_batch(
             tokenized = tokenizer_source.encode(text, out_type=str)
             tokenized_texts.append(tokenized)
             valid_indices.append(idx)
-        except Exception:
-            pass
+        except Exception as e:
+            if not silent:
+                print(f"Warning: Error tokenizing text at index {idx}: {e}")
 
     if not tokenized_texts:
         return [""] * len(texts)
@@ -165,7 +199,9 @@ def translate_batch(
             source=tokenized_texts,
             beam_size=beam_size
         )
-    except Exception:
+    except Exception as e:
+        if not silent:
+            print(f"Error during batch translation: {e}")
         return [""] * len(texts)
 
     # Initialize result list with empty strings
@@ -176,8 +212,9 @@ def translate_batch(
         try:
             translated_text = tokenizer_target.decode(translated_result.hypotheses[0]).replace('<unk>', '')
             translated_texts[idx] = translated_text
-        except Exception:
-            pass
+        except Exception as e:
+            if not silent:
+                print(f"Warning: Error decoding translation at index {idx}: {e}")
 
     return translated_texts
 
@@ -220,7 +257,7 @@ def translate_individual(
         return [""] * len(texts)
 
     # Load translation models once
-    translator, tokenizer_source, tokenizer_target = load_translation_models(model_path, device)
+    translator, tokenizer_source, tokenizer_target = load_translation_models(model_path, device, silent=silent)
 
     # Initialize result list with empty strings
     translated_texts = [""] * len(texts)
@@ -244,7 +281,8 @@ def translate_individual(
             translated_text = tokenizer_target.decode(translated_results[0].hypotheses[0]).replace('<unk>', '')
             translated_texts[idx] = translated_text
 
-        except Exception:
-            pass
+        except Exception as e:
+            if not silent:
+                print(f"Warning: Error translating text at index {idx}: {e}")
 
     return translated_texts
