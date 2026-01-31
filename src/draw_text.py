@@ -1,63 +1,24 @@
 from PIL import Image, ImageDraw, ImageFont
 import textwrap
-import platform
-import os
 import cv2
 import numpy as np
 from src.bbox import BoundingBox
 
-def _get_system_font_path():
-    """Try to find a system font path"""
-    system = platform.system()
-    
-    if system == "Windows":
-        # Common Windows fonts
-        font_dirs = [
-            r"C:\Windows\Fonts\arial.ttf",
-            r"C:\Windows\Fonts\Arial.ttf",
-            r"C:\Windows\Fonts\verdana.ttf",
-            r"C:\Windows\Fonts\Verdana.ttf",
-            r"C:\Windows\Fonts\calibri.ttf",
-            r"C:\Windows\Fonts\Calibri.ttf",
-        ]
-    elif system == "Darwin":  # macOS
-        font_dirs = [
-            "/Library/Fonts/Arial.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-        ]
-    else:  # Linux
-        font_dirs = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        ]
-    
-    for font_path in font_dirs:
-        if os.path.exists(font_path):
-            return font_path
-    
-    return None
-
-def get_font_size_for_box(text, bbox_width, bbox_height, font_path=None, max_size=100, min_size=5):
+def get_font_size_for_box(text, bbox_width, bbox_height, font_path, max_size=100, min_size=5):
     """
     Find the largest font size that fits text within a bounding box
-    
+
     Args:
         text: Text to fit
         bbox_width: Width of bounding box
         bbox_height: Height of bounding box
-        font_path: Path to font file (None to try system font)
+        font_path: Path to font file
         max_size: Maximum font size to try
         min_size: Minimum font size to try
-    
+
     Returns:
         PIL ImageFont object at appropriate size
     """
-    # Try to find a system font if no path provided
-    if font_path is None:
-        font_path = _get_system_font_path()
-    
     # Create a temporary image and draw object for measuring actual text bounds
     temp_image = Image.new('RGB', (bbox_width, bbox_height), color='white')
     temp_draw = ImageDraw.Draw(temp_image)
@@ -155,16 +116,16 @@ def draw_text_with_outline(draw, text, position, font, fill_color='black', outli
     # Draw main text on top
     draw.text(position, text, font=font, fill=fill_color)
 
-def draw_text_on_image(image: Image.Image, box_texts, bubble_masks, font_path=None):
+def draw_text_on_image(image: Image.Image, box_texts, bubble_masks, font_path):
     """
     Draw translated text on the original image within bubble interior shapes
-    
+
     Args:
         image: Input PIL Image
         box_texts: List of (bbox, translated_text) tuples where bbox is a BoundingBox instance
         bubble_masks: Dictionary mapping BoundingBox to bubble_mask numpy array
-        font_path: Path to font file (None to try system font)
-    
+        font_path: Path to font file
+
     Returns:
         PIL Image with translated text drawn on it
     """

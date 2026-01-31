@@ -39,8 +39,6 @@ def load_ocr_model(model_id="jzhang533/PaddleOCR-VL-For-Manga", device=None, sil
 
     # Return cached models if same model and device
     if _cached_model is not None and cache_key == _cached_key:
-        if not silent:
-            print(f"Using cached OCR model: {model_id} on {device}")
         return _cached_processor, _cached_model
 
     if not silent:
