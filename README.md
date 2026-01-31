@@ -1,6 +1,6 @@
 # Manga Translation CLI
 
-Fully automated manga translation pipeline. Intelligently detects speech bubbles, extracts Japanese text with OCR, translates to English, and seamlessly renders translated text back onto pages with proper alignment and customizable fonts. Supports both single images and batch folder processing with GPU acceleration.
+Fully automated and offline manga translation pipeline. Intelligently detects speech bubbles, extracts Japanese text with OCR, translates to English, and seamlessly renders translated text back onto pages with proper alignment and customizable fonts. Supports both single images and batch folder processing with GPU acceleration.
 
 ## Showcase
 
@@ -24,11 +24,19 @@ Fully automated manga translation pipeline. Intelligently detects speech bubbles
 
 *Source: Ajin: Demi-Human*
 
+| Original | Translated |
+|----------|------------|
+| ![Original](docs/frieren_raw.jpg) | ![Translated](docs/frieren_translated.png) |
+
+*Source: Frieren: Beyond Journey's End*
+
 **Pipeline stages:**
 1. **Original**: Input manga page with Japanese text
 2. **Detection**: YOLO model identifies speech bubble locations (green boxes)
 3. **Cleaned**: Bubble interiors filled with base color, text removed
 4. **Translated**: English text rendered within bubble shapes
+
+> **Disclaimer:** Example images are from published manga and used for demonstration purposes only. All rights belong to their respective copyright holders. This tool is intended for personal use with legally obtained content.
 
 ## Table of Contents
 
@@ -49,6 +57,7 @@ Fully automated manga translation pipeline. Intelligently detects speech bubbles
 - [How It Works](#how-it-works)
 - [Switching Between CPU and CUDA](#switching-between-cpu-and-cuda)
 - [Limitations](#limitations)
+- [Known Issues](#known-issues)
 - [Contributing](#contributing)
 - [Credits](#credits)
 - [Changelog](#changelog)
@@ -226,6 +235,12 @@ After installation, to change PyTorch backend:
 - Complex bubble backgrounds may not fill cleanly
 - Currently Japanese→English only; other languages not supported
 
+## Known Issues
+
+- Bubble detection can sometimes break on compound bubbles, causing them to not be processed properly.
+
+Please [open an issue](https://github.com/zanbowie138/manga-translator-cli/issues) if you encounter problems.
+
 ## Contributing
 
 Contributions welcome! To contribute:
@@ -248,6 +263,8 @@ uv sync
 
 **Areas for contribution:**
 - Improved bubble detection algorithms
+- Fix bubble detection for compound bubbles
+- Improved translation accuracy 
 - Translation for text outside of bubbles
 - Support for additional languages
 - UI/web interface
@@ -270,7 +287,7 @@ uv sync
 
 ## Notes
 
-- First run downloads models (several minutes)
+- First run downloads models (can take several minutes)
 - Translation quality depends on text clarity and font style
 - GPU requires CUDA 12.8-compatible NVIDIA GPU + drivers
 - `--device` controls both OCR and translation device
