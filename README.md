@@ -1,9 +1,28 @@
 # Manga Translation CLI
 
-Automated tool for translating manga pages from Japanese to English. Detects speech bubbles, extracts Japanese text, translates to English, and renders the translated text back onto the image.
+Fully automated manga translation pipeline. Intelligently detects speech bubbles, extracts Japanese text with OCR, translates to English, and seamlessly renders translated text back onto pages with proper alignment and customizable fonts. Supports both single images and batch folder processing with GPU acceleration.
+
+## Showcase
+
+### Example 1: Complete Pipeline
+| Original | Detection | Cleaned | Translated |
+|----------|-----------|---------|------------|
+| ![Original](docs/motl_raw.png) | ![Detection](docs/motl_speech_bubbles.png) | ![Cleaned](docs/motl_cleaned.png) | ![Translated](docs/motl_translated.png) |
+
+### Example 2: Translation Result
+| Original | Translated |
+|----------|------------|
+| ![Original](docs/wha_raw.jpg) | ![Translated](docs/wha_translated.png) |
+
+**Pipeline stages:**
+1. **Original**: Input manga page with Japanese text
+2. **Detection**: YOLO model identifies speech bubble locations (green boxes)
+3. **Cleaned**: Bubble interiors filled with base color, text removed
+4. **Translated**: English text rendered within bubble shapes
 
 ## Table of Contents
 
+- [Showcase](#showcase)
 - [Features](#features)
 - [Installation](#installation)
   - [Requirements](#requirements)
@@ -19,16 +38,23 @@ Automated tool for translating manga pages from Japanese to English. Detects spe
 - [Dependencies](#dependencies)
 - [How It Works](#how-it-works)
 - [Switching Between CPU and CUDA](#switching-between-cpu-and-cuda)
+- [Limitations](#limitations)
+- [Contributing](#contributing)
+- [Credits](#credits)
+- [Changelog](#changelog)
 - [Notes](#notes)
 
 ## Features
 
-- Automatic speech bubble detection using YOLO
-- Japanese text extraction using PaddleOCR-VL
-- Japanese to English translation using Sugoi-v4
-- Text alignment within speech bubble shapes
-- Batch processing support for entire folders
-- Configurable detection and processing parameters
+- **Automatic speech bubble detection** using YOLO (YOLOv8m)
+- **Japanese text extraction** using PaddleOCR-VL transformer model
+- **High-quality translation** using Sugoi-v4 (specialized for Japanese→English)
+- **Smart text rendering** with automatic font sizing and alignment within bubble shapes
+- **Custom font support** for personalized text styling
+- **Batch processing** for entire folders with optimized GPU utilization
+- **GPU acceleration** with CUDA support for faster processing
+- **Configurable detection** with adjustable confidence and IoU thresholds
+- **Intermediate outputs** for debugging (bubble masks, cleaned images, detections)
 
 ## Installation
 
@@ -67,40 +93,45 @@ Models will be automatically downloaded on first use:
 ### Single Image Translation
 
 ```bash
-manga-translate input/page1.png --output output
+manga-translate input/page1.png
 ```
 
 ### Folder Translation
 
 ```bash
-manga-translate input/ --output output
+manga-translate input/
 ```
 
 ### Common Options
 
+Change output folder:
+```bash
+manga-translate input/page1.png --output folder --save-all
+```
+
 Save all intermediate outputs:
 ```bash
-manga-translate input/page1.png --output output --save-all
+manga-translate input/page1.png --save-all
 ```
 
 Use custom font:
 ```bash
-manga-translate input/page1.png --output output --font "fonts/CC Astro City Int Regular.ttf"
+manga-translate input/page1.png --font "fonts/CC Astro City Int Regular.ttf"
 ```
 
 Adjust detection sensitivity:
 ```bash
-manga-translate input/page1.png --output output --conf-threshold 0.3 --iou-threshold 0.5
+manga-translate input/page1.png --conf-threshold 0.3 --iou-threshold 0.5
 ```
 
-Use GPU acceleration:
+Force CPU mode (GPU is used by default if available):
 ```bash
-manga-translate input/page1.png --output output --device cuda
+manga-translate input/page1.png --device cpu
 ```
 
 Quiet mode:
 ```bash
-manga-translate input/page1.png --output output --quiet
+manga-translate input/page1.png --quiet
 ```
 
 ### Available Options
@@ -110,7 +141,7 @@ manga-translate input/page1.png --output output --quiet
 - `--conf-threshold`: Confidence threshold for bubble detection (0-1, default: 0.25)
 - `--iou-threshold`: IoU threshold for NMS (0-1, default: 0.45)
 - `--font`: Path to font file for translated text
-- `--device`: Device for OCR and translation (cpu or cuda, default: cpu). Controls which device is used for both text extraction and translation.
+- `--device`: Device for OCR and translation (cpu or cuda, default: auto-detect, uses cuda if available). Controls which device is used for both text extraction and translation.
 - `--save-all`: Save all intermediate outputs
 - `--save-speech-bubbles`: Save annotated detection images
 - `--save-bubble-interiors`: Save bubble interior visualizations
@@ -127,10 +158,29 @@ manga-translate --help
 
 When processing files, outputs are organized in subdirectories:
 
-- `translated/`: Final translated images
-- `speech_bubbles/`: Annotated images with detected bubbles
-- `bubble_interiors/`: Visualization of bubble interiors
-- `cleaned/`: Images with bubbles filled (before text rendering)
+- `translated/`: Final translated images (always saved)
+- `speech_bubbles/`: Annotated images with detected bubbles (enabled with `--save-speech-bubbles`)
+- `bubble_interiors/`: Visualization of bubble interiors (enabled with `--save-bubble-interiors`)
+- `cleaned/`: Images with bubbles filled before text rendering (enabled with `--save-cleaned`)
+
+Use `--save-all` to enable all intermediate outputs at once.
+
+**Example output structure:**
+```
+output/
+├── translated/
+│   ├── page1.png
+│   └── page2.png
+├── speech_bubbles/      # if --save-speech-bubbles or --save-all
+│   ├── page1.png
+│   └── page2.png
+├── bubble_interiors/    # if --save-bubble-interiors or --save-all
+│   ├── page1.png
+│   └── page2.png
+└── cleaned/             # if --save-cleaned or --save-all
+    ├── page1.png
+    └── page2.png
+```
 
 ## Dependencies
 
@@ -159,6 +209,54 @@ After installation, to change PyTorch backend:
 1. Edit `pyproject.toml` `[tool.uv.sources]` section (comment/uncomment lines)
 2. Run `uv sync`
 3. Use `--device cuda` when running to use GPU
+
+## Limitations
+- Dense panels with overlapping bubbles have detection issues
+- Text outside of bubbles won't be translated
+- Complex bubble backgrounds may not fill cleanly
+- Currently Japanese→English only; other languages not supported
+
+## Contributing
+
+Contributions welcome! To contribute:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/improvement`)
+3. Make your changes
+4. Run tests if applicable
+5. Commit with clear messages (`git commit -m "Add feature"`)
+6. Push to your fork (`git push origin feature/improvement`)
+7. Open a Pull Request
+
+**Development setup:**
+```bash
+git clone <your-fork>
+cd manga-translator-cli
+# Edit pyproject.toml for CPU/CUDA preference
+uv sync
+```
+
+**Areas for contribution:**
+- Improved bubble detection algorithms
+- Translation for text outside of bubbles
+- Support for additional languages
+- UI/web interface
+- Performance optimizations
+- Documentation improvements
+
+## Credits
+
+**Models:**
+- [YOLOv8m Manga Bubbles](https://huggingface.co/Oguzhan61/yolov8m_manga_bubbles) by Oguzhan61 - Speech bubble detection
+- [PaddleOCR-VL For Manga](https://huggingface.co/jzhang533/PaddleOCR-VL-For-Manga) by jzhang533 - Japanese text extraction
+- [Sugoi-v4 JA-EN](https://huggingface.co/entai2965/sugoi-v4-ja-en-ctranslate2) by entai2965 - Japanese to English translation
+
+**Libraries:**
+- [Ultralytics](https://github.com/ultralytics/ultralytics) - YOLO implementation
+- [Transformers](https://github.com/huggingface/transformers) - HuggingFace transformers library
+- [CTranslate2](https://github.com/OpenNMT/CTranslate2) - Fast inference engine
+- [PyTorch](https://pytorch.org/) - Deep learning framework
+- [UV](https://github.com/astral-sh/uv) - Fast Python package manager
 
 ## Notes
 
