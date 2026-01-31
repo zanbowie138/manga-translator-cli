@@ -9,10 +9,20 @@ Fully automated manga translation pipeline. Intelligently detects speech bubbles
 |----------|-----------|---------|------------|
 | ![Original](docs/motl_raw.png) | ![Detection](docs/motl_speech_bubbles.png) | ![Cleaned](docs/motl_cleaned.png) | ![Translated](docs/motl_translated.png) |
 
+*Source: Magus of the Library*
+
 ### Example 2: Translation Result
 | Original | Translated |
 |----------|------------|
 | ![Original](docs/wha_raw.jpg) | ![Translated](docs/wha_translated.png) |
+
+*Source: Witch Hat Atelier*
+
+| Original | Translated |
+|----------|------------|
+| ![Original](docs/ajin_raw.jpg) | ![Translated](docs/ajin_translated.png) |
+
+*Source: Ajin: Demi-Human*
 
 **Pipeline stages:**
 1. **Original**: Input manga page with Japanese text
