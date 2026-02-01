@@ -1,6 +1,6 @@
 [project]
 name = "manga-translator-cli"
-version = "1.0.0"
+version = "1.0.1"
 description = "A CLI tool for automatically translating manga pages from Japanese to English. Detects speech bubbles, extracts Japanese text using OCR, translates to English, and renders the translated text back onto images with proper alignment."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -8,8 +8,6 @@ dependencies = [
     "pillow>=12.1.0",
     "protobuf>=3.20.0",
     "sentencepiece>=0.2.1",
-    "torch>=2.9.1",
-    "torchvision>=0.24.1",
     "ultralytics>=8.0.0",
     "huggingface-hub>=0.20.0",
     "ctranslate2>=4.6.3",
@@ -20,6 +18,15 @@ dependencies = [
     "transformers==4.57.1",
 ]
 
+[project.optional-dependencies]
+cuda = [
+    "torch>=2.9.1",
+    "torchvision>=0.24.1",
+]
+cpu = [
+    "torch>=2.9.1",
+    "torchvision>=0.24.1",
+]
 
 [project.scripts]
 manga-translate = "src.main:main"
@@ -30,4 +37,25 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+[tool.uv]
+index-strategy = "unsafe-best-match"
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu128", marker = "extra == 'cuda'" },
+    { index = "pytorch-cpu", marker = "extra == 'cpu' and extra != 'cuda'" },
+]
+torchvision = [
+    { index = "pytorch-cu128", marker = "extra == 'cuda'" },
+    { index = "pytorch-cpu", marker = "extra == 'cpu' and extra != 'cuda'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 

@@ -79,7 +79,7 @@ Fully automated and offline manga translation pipeline. Intelligently detects sp
 ### Requirements
 
 - Python 3.13 or higher
-- UV package manager (recommended) or pip
+- UV package manager (recommended) or pip (currently untested)
 
 For uv installation, visit: https://github.com/astral-sh/uv
 
@@ -91,12 +91,12 @@ Installs with CUDA support for GPU acceleration. Requires CUDA-compatible NVIDIA
 
 **Using uv (recommended):**
 ```bash
-uv tool install manga-translator-cli --extra-index-url https://download.pytorch.org/whl/cu128
+uv tool install manga-translator-cli[cuda]
 ```
 
 **Using pip:**
 ```bash
-pip install manga-translator-cli --extra-index-url https://download.pytorch.org/whl/cu128
+pip install manga-translator-cli[cuda] --extra-index-url https://download.pytorch.org/whl/cu128
 ```
 
 #### CPU-Only Installation
@@ -105,12 +105,12 @@ For systems without a GPU or to save disk space.
 
 **Using uv (recommended):**
 ```bash
-uv tool install manga-translator-cli --extra-index-url https://download.pytorch.org/whl/cpu
+uv tool install manga-translator-cli[cpu]
 ```
 
 **Using pip:**
 ```bash
-pip install manga-translator-cli --extra-index-url https://download.pytorch.org/whl/cpu
+pip install manga-translator-cli[cpu] --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
 ### Install from Source
@@ -127,12 +127,12 @@ cd manga-translator-cli
 
 **GPU (CUDA 12.8):**
 ```bash
-uv sync --extra-index-url https://download.pytorch.org/whl/cu128
+uv sync --extra cuda
 ```
 
 **CPU-only:**
 ```bash
-uv sync --extra-index-url https://download.pytorch.org/whl/cpu
+uv sync --extra cpu
 ```
 
 ### Models
@@ -150,10 +150,10 @@ Models will be automatically downloaded on first use:
 manga-translate input/page1.png
 ```
 
-### Folder Translation
+### Folder Translation (batch mode recommended)
 
 ```bash
-manga-translate input/
+manga-translate input/ --batch
 ```
 
 ### Common Options
@@ -285,7 +285,8 @@ Contributions welcome! To contribute:
 ```bash
 git clone <your-fork>
 cd manga-translator-cli
-uv sync --extra-index-url https://download.pytorch.org/whl/cu128  # GPU (or use cpu index)
+uv sync --extra cuda  # GPU (or use --extra cpu for CPU-only)
+uv tool install .
 ```
 
 **Areas for contribution:**
@@ -319,5 +320,5 @@ uv sync --extra-index-url https://download.pytorch.org/whl/cu128  # GPU (or use 
 - GPU requires CUDA-compatible NVIDIA GPU + drivers
 - `--device` controls both OCR and translation device
 - Supported formats: PNG, JPG, JPEG, WEBP
-- To reinstall with different PyTorch backend, use the appropriate installation command from the Setup section
+- To switch PyTorch backend, reinstall with `[cuda]` or `[cpu]` extra as shown in Installation section
 
