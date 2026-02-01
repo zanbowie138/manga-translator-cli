@@ -91,7 +91,7 @@ Installs with CUDA support for GPU acceleration. Requires CUDA-compatible NVIDIA
 
 **Using uv (recommended):**
 ```bash
-uv tool install manga-translator-cli[cuda]
+uv tool install manga-translator-cli[cuda] --index https://download.pytorch.org/whl/cu128 --index-strategy unsafe-best-match
 ```
 
 **Using pip:**
@@ -105,7 +105,7 @@ For systems without a GPU or to save disk space.
 
 **Using uv (recommended):**
 ```bash
-uv tool install manga-translator-cli[cpu]
+uv tool install manga-translator-cli[cpu] --index https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
 ```
 
 **Using pip:**
