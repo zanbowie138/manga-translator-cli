@@ -115,7 +115,7 @@ def extract_text(image, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_new_tok
     return extracted_text
 
 
-def extract_text_batch(images, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_new_tokens=2048, device=None, silent=False):
+def extract_text_batch(images, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_new_tokens=2048, device=None, silent=False, progress_callback=None):
     """
     Extract text from multiple images using PaddleOCR-VL (sequential processing for debugging)
 
@@ -128,6 +128,7 @@ def extract_text_batch(images, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_
         max_new_tokens: Maximum tokens to generate
         device: Device to use ("cuda" or "cpu"), auto-detects if None
         silent: If True, suppress progress messages
+        progress_callback: Optional callback function to call after each image (receives no arguments)
 
     Returns:
         List of extracted text strings (one per image)
@@ -139,7 +140,12 @@ def extract_text_batch(images, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_
     load_ocr_model(model_id, device=device, silent=silent)
 
     extracted_texts = []
-    iterator = tqdm(images, desc="Extracting text", disable=silent, unit="bubble")
+
+    # Use progress_callback if provided, otherwise use tqdm
+    if progress_callback:
+        iterator = images
+    else:
+        iterator = tqdm(images, desc="Extracting text", disable=silent, unit="bubble")
 
     for idx, image in enumerate(iterator):
         try:
@@ -149,6 +155,10 @@ def extract_text_batch(images, model_id="jzhang533/PaddleOCR-VL-For-Manga", max_
             if not silent:
                 print(f"Warning: Error extracting text from bubble {idx+1}: {e}")
             extracted_texts.append("")
+
+        # Call progress callback if provided
+        if progress_callback:
+            progress_callback()
 
     return extracted_texts
 

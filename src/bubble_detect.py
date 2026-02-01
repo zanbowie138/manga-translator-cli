@@ -80,6 +80,7 @@ def run_detection(model, image: Image.Image, conf_threshold=0.25, iou_threshold=
         show_conf=True,
         imgsz=640,
         save=False,
+        verbose=not silent,
     )
 
     # Process results to extract annotated image and bounding boxes

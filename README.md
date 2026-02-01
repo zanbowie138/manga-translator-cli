@@ -266,6 +266,7 @@ output/
 ## Known Issues
 
 - Bubble detection can sometimes break on compound bubbles, causing them to not be processed properly.
+- Translation on text outside of bubbles is not currently supported
 
 Please [open an issue](https://github.com/zanbowie138/manga-translator-cli/issues) if you encounter problems.
 
@@ -286,7 +287,7 @@ Contributions welcome! To contribute:
 git clone <your-fork>
 cd manga-translator-cli
 uv sync --extra cuda  # GPU (or use --extra cpu for CPU-only)
-uv tool install .
+uv tool install .[cuda] # GPU
 ```
 
 **Areas for contribution:**
