@@ -328,27 +328,38 @@ def main():
         all_batch_images = []
 
         if args.batch:
-            # Collect all images from folders and individual files
+            # Process each input (folders and files) in batch mode
             for input_str in args.input:
                 input_path = Path(input_str)
 
                 if input_path.is_dir():
-                    # Collect all images from this folder
-                    image_files = [
-                        str(f) for f in input_path.iterdir()
-                        if f.is_file() and f.suffix in supported_extensions
-                    ]
-                    image_files.sort(key=lambda x: Path(x).name)
-                    all_batch_images.extend(image_files)
+                    # Process folder using batch mode
+                    console.section(f"Batch processing folder: {input_str}")
 
-                    console.info(f"Collected {len(image_files)} image(s) from folder: {input_str}")
+                    results = translate_manga_folder_batch(
+                        input_folder=input_str,
+                        output_folder=args.output,
+                        config=config,
+                        console=console,
+                        batch_amount=args.batch_amount
+                    )
+
+                    total_processed += results['successful_count']
+                    total_failed += results['failed_count']
+                    all_results.append(('folder', input_str, results))
+
+                    console.print(f"\nFolder '{input_str}' summary:")
+                    console.print(f"  Total files: {results['total_files']}")
+                    console.print(f"  Successfully processed: {results['successful_count']}")
+                    console.print(f"  Failed: {results['failed_count']}")
 
                 elif input_path.is_file() and input_path.suffix in supported_extensions:
+                    # Collect individual files for batch processing
                     all_batch_images.append(input_str)
 
-            # Process all collected images together in batch mode
+            # Process collected individual files (not from folders) in batch mode
             if all_batch_images:
-                console.section(f"Batch processing {len(all_batch_images)} image(s) from all inputs...")
+                console.section(f"Batch processing {len(all_batch_images)} individual file(s)...")
 
                 try:
                     results_dict = translate_manga_page_batch(
@@ -373,8 +384,6 @@ def main():
                     if args.stop_on_error:
                         raise
                     total_failed = len(all_batch_images)
-            else:
-                console.info("No images found to process")
         else:
             # Non-batch mode: process each input separately
             for input_str in args.input:
