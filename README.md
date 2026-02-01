@@ -7,26 +7,26 @@ Fully automated and offline manga translation pipeline. Intelligently detects sp
 ### Example 1: Complete Pipeline
 | Original | Detection | Cleaned | Translated |
 |----------|-----------|---------|------------|
-| ![Original](docs/motl_raw.png) | ![Detection](docs/motl_speech_bubbles.png) | ![Cleaned](docs/motl_cleaned.png) | ![Translated](docs/motl_translated.png) |
+| ![Original](https://raw.githubusercontent.com/zanbowie138/manga-translator-cli/main/docs/motl_raw.png) | ![Detection](https://raw.githubusercontent.com/zanbowie138/manga-translator-cli/main/docs/motl_speech_bubbles.png) | ![Cleaned](https://raw.githubusercontent.com/zanbowie138/manga-translator-cli/main/docs/motl_cleaned.png) | ![Translated](https://raw.githubusercontent.com/zanbowie138/manga-translator-cli/main/docs/motl_translated.png) |
 
 *Source: Magus of the Library*
 
 ### Example 2: Translation Result
 | Original | Translated |
 |----------|------------|
-| ![Original](docs/wha_raw.jpg) | ![Translated](docs/wha_translated.png) |
+| ![Original](https://raw.githubusercontent.com/zanbowie138/manga-translator-cli/main/docs/wha_raw.jpg) | ![Translated](https://raw.githubusercontent.com/zanbowie138/manga-translator-cli/main/docs/wha_translated.png) |
 
 *Source: Witch Hat Atelier*
 
 | Original | Translated |
 |----------|------------|
-| ![Original](docs/ajin_raw.jpg) | ![Translated](docs/ajin_translated.png) |
+| ![Original](https://raw.githubusercontent.com/zanbowie138/manga-translator-cli/main/docs/ajin_raw.jpg) | ![Translated](https://raw.githubusercontent.com/zanbowie138/manga-translator-cli/main/docs/ajin_translated.png) |
 
 *Source: Ajin: Demi-Human*
 
 | Original | Translated |
 |----------|------------|
-| ![Original](docs/frieren_raw.jpg) | ![Translated](docs/frieren_translated.png) |
+| ![Original](https://raw.githubusercontent.com/zanbowie138/manga-translator-cli/main/docs/frieren_raw.jpg) | ![Translated](https://raw.githubusercontent.com/zanbowie138/manga-translator-cli/main/docs/frieren_translated.png) |
 
 *Source: Frieren: Beyond Journey's End*
 
