@@ -44,8 +44,8 @@ Fully automated and offline manga translation pipeline. Intelligently detects sp
 - [Features](#features)
 - [Installation](#installation)
   - [Requirements](#requirements)
-  - [Installing UV](#installing-uv)
-  - [Setup](#setup)
+  - [Install from PyPI](#install-from-pypi)
+  - [Install from Source](#install-from-source)
   - [Models](#models)
 - [Usage](#usage)
   - [Single Image Translation](#single-image-translation)
@@ -55,7 +55,6 @@ Fully automated and offline manga translation pipeline. Intelligently detects sp
 - [Output Structure](#output-structure)
 - [Dependencies](#dependencies)
 - [How It Works](#how-it-works)
-- [Switching Between CPU and CUDA](#switching-between-cpu-and-cuda)
 - [Limitations](#limitations)
 - [Known Issues](#known-issues)
 - [Contributing](#contributing)
@@ -80,25 +79,61 @@ Fully automated and offline manga translation pipeline. Intelligently detects sp
 ### Requirements
 
 - Python 3.13 or higher
-- UV package manager
+- UV package manager (recommended) or pip
 
 For uv installation, visit: https://github.com/astral-sh/uv
 
-### Setup
+### Install from PyPI
 
-1. Clone or download this repository
+#### GPU Installation (CUDA 12.8)
 
-2. **Select CPU or CUDA backend** (edit `pyproject.toml`):
-   - Open `pyproject.toml`
-   - Find `[tool.uv.sources]` section (line ~37)
-   - Comment out CPU lines and uncomment CUDA lines for GPU
-   - Comment out CUDA lines and uncomment CPU lines for CPU-only
-   - Default: CUDA 12.8
+Installs with CUDA support for GPU acceleration. Requires CUDA-compatible NVIDIA GPU.
 
-3. **Install dependencies:**
-   ```bash
-   uv sync
-   ```
+**Using uv (recommended):**
+```bash
+uv tool install manga-translator-cli --extra-index-url https://download.pytorch.org/whl/cu128
+```
+
+**Using pip:**
+```bash
+pip install manga-translator-cli --extra-index-url https://download.pytorch.org/whl/cu128
+```
+
+#### CPU-Only Installation
+
+For systems without a GPU or to save disk space.
+
+**Using uv (recommended):**
+```bash
+uv tool install manga-translator-cli --extra-index-url https://download.pytorch.org/whl/cpu
+```
+
+**Using pip:**
+```bash
+pip install manga-translator-cli --extra-index-url https://download.pytorch.org/whl/cpu
+```
+
+### Install from Source
+
+For development or to use the latest unreleased changes.
+
+1. Clone the repository:
+```bash
+git clone https://github.com/zanbowie138/manga-translator-cli.git
+cd manga-translator-cli
+```
+
+2. Install with your preferred backend:
+
+**GPU (CUDA 12.8):**
+```bash
+uv sync --extra-index-url https://download.pytorch.org/whl/cu128
+```
+
+**CPU-only:**
+```bash
+uv sync --extra-index-url https://download.pytorch.org/whl/cpu
+```
 
 ### Models
 
@@ -222,13 +257,6 @@ output/
 7. Renders translated text within bubble shapes using binary search for optimal font size
 8. Saves the final translated image
 
-## Switching Between CPU and CUDA
-
-After installation, to change PyTorch backend:
-1. Edit `pyproject.toml` `[tool.uv.sources]` section (comment/uncomment lines)
-2. Run `uv sync`
-3. Use `--device cuda` when running to use GPU
-
 ## Limitations
 - Dense panels with overlapping bubbles have detection issues
 - Text outside of bubbles won't be translated
@@ -257,8 +285,7 @@ Contributions welcome! To contribute:
 ```bash
 git clone <your-fork>
 cd manga-translator-cli
-# Edit pyproject.toml for CPU/CUDA preference
-uv sync
+uv sync --extra-index-url https://download.pytorch.org/whl/cu128  # GPU (or use cpu index)
 ```
 
 **Areas for contribution:**
@@ -289,7 +316,8 @@ uv sync
 
 - First run downloads models (can take several minutes)
 - Translation quality depends on text clarity and font style
-- GPU requires CUDA 12.8-compatible NVIDIA GPU + drivers
+- GPU requires CUDA-compatible NVIDIA GPU + drivers
 - `--device` controls both OCR and translation device
 - Supported formats: PNG, JPG, JPEG, WEBP
+- To reinstall with different PyTorch backend, use the appropriate installation command from the Setup section
 
