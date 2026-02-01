@@ -18,16 +18,6 @@ dependencies = [
     "transformers==4.57.1",
 ]
 
-[project.optional-dependencies]
-cuda = [
-    "torch>=2.9.1",
-    "torchvision>=0.24.1",
-]
-cpu = [
-    "torch>=2.9.1",
-    "torchvision>=0.24.1",
-]
-
 [project.scripts]
 manga-translate = "src.main:main"
 
@@ -41,14 +31,24 @@ packages = ["src"]
 [tool.uv]
 index-strategy = "unsafe-best-match"
 
+[project.optional-dependencies]
+cuda = [
+    "torch>=2.9.1",
+    "torchvision>=0.24.1",
+]
+cpu = [
+    "torch>=2.9.1",
+    "torchvision>=0.24.1",
+]
+
 [tool.uv.sources]
 torch = [
     { index = "pytorch-cu128", marker = "extra == 'cuda'" },
-    { index = "pytorch-cpu", marker = "extra == 'cpu' and extra != 'cuda'" },
+    { index = "pytorch-cpu", marker = "extra != 'cuda'" },
 ]
 torchvision = [
     { index = "pytorch-cu128", marker = "extra == 'cuda'" },
-    { index = "pytorch-cpu", marker = "extra == 'cpu' and extra != 'cuda'" },
+    { index = "pytorch-cpu", marker = "extra != 'cuda'" },
 ]
 
 [[tool.uv.index]]
